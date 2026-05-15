@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -15,21 +15,10 @@ enum JobStatus {
   TIMEOUT
 }
 
-enum WorkerStatus {
-  ONLINE
-  OFFLINE
-}
-
-enum EventType {
-  PROGRESS
-  LOG
-  ERROR
-}
-
 model Worker {
   id             String       @id @default(uuid())
   name           String
-  status         WorkerStatus @default(OFFLINE)
+  status         String       @default("OFFLINE")
   lastHeartbeat  DateTime     @default(now())
   jobs           Job[]
   createdAt      DateTime     @default(now())
@@ -40,9 +29,9 @@ model Job {
   id             String       @id @default(uuid())
   correlationId  String?      @unique
   workflowName   String
-  inputParams    Json
-  status         JobStatus    @default(PENDING)
-  resultData     Json?
+  inputParams    String       // Store as string/JSON for SQLite compatibility
+  status         String       @default("PENDING")
+  resultData     String?      // Store as string/JSON for SQLite compatibility
   workerId       String?
   worker         Worker?      @relation(fields: [workerId], references: [id])
   events         JobEvent[]
@@ -56,8 +45,8 @@ model JobEvent {
   id             Int          @id @default(autoincrement())
   jobId          String
   job            Job          @relation(fields: [jobId], references: [id])
-  eventType      EventType
+  eventType      String
   message        String
-  payload        Json?
+  payload        String?      // Store as string/JSON for SQLite compatibility
   createdAt      DateTime     @default(now())
 }
