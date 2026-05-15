@@ -35,12 +35,17 @@ Mode:
 
 Endpoint:
 - `GET /tools`
+- `GET /admin/tools` → UI untuk create/edit/delete tool
+- `GET /admin/api/tools`
+- `POST /admin/api/tools`
+- `PUT /admin/api/tools/:id`
+- `DELETE /admin/api/tools/:id`
 - `POST /reload-workflows`
 - `POST /invoke/start_workflow`
 - `GET /invoke/get_last_result`
 - `GET /invoke/job/:id`
 
-Workflow tool names bisa diatur lewat file JSON (`bridge/workflows.json`, lihat `bridge/workflows.example.json`).
+Workflow tool names bisa diatur lewat file JSON (`bridge/workflows.json`, lihat `bridge/workflows.example.json`) atau lewat UI admin.
 
 ### 3. Worker
 Mode:
@@ -57,6 +62,12 @@ cp bridge/workflows.example.json bridge/workflows.json
 cp .env.example .env 2>/dev/null || true
 docker compose up -d --build
 ```
+
+Lalu buka:
+```bash
+http://localhost:3100/admin/tools
+```
+untuk membuat tool baru dari browser.
 
 Atau minimal siapkan env shell:
 ```bash

@@ -53,6 +53,16 @@ type WorkflowConfig = {
   readAliases?: string[];
 };
 
+const WorkflowConfigSchema = z.object({
+  id: z.string().min(1),
+  toolName: z.string().min(1),
+  readToolName: z.string().min(1).optional().or(z.literal('')),
+  description: z.string().optional(),
+  readDescription: z.string().optional(),
+  aliases: z.array(z.string()).optional(),
+  readAliases: z.array(z.string()).optional(),
+});
+
 type BridgeState = {
   lastJobs?: Record<string, { jobId: string; createdAt: string }>;
 };
@@ -158,6 +168,24 @@ function rebuildWorkflowMaps() {
   }
 }
 
+function normalizeWorkflowConfig(input: z.infer<typeof WorkflowConfigSchema>): WorkflowConfig {
+  return {
+    id: input.id.trim(),
+    toolName: input.toolName.trim(),
+    readToolName: input.readToolName?.trim() || undefined,
+    description: input.description?.trim() || undefined,
+    readDescription: input.readDescription?.trim() || undefined,
+    aliases: (input.aliases || []).map((x) => x.trim()).filter(Boolean),
+    readAliases: (input.readAliases || []).map((x) => x.trim()).filter(Boolean),
+  };
+}
+
+function saveWorkflowConfigs() {
+  ensureParentDir(WORKFLOWS_CONFIG_PATH);
+  fs.writeFileSync(WORKFLOWS_CONFIG_PATH, JSON.stringify(workflowConfigs, null, 2));
+  rebuildWorkflowMaps();
+}
+
 function loadWorkflowConfigs() {
   try {
     if (!fs.existsSync(WORKFLOWS_CONFIG_PATH)) {
@@ -166,7 +194,9 @@ function loadWorkflowConfigs() {
       return;
     }
     const parsed = JSON.parse(fs.readFileSync(WORKFLOWS_CONFIG_PATH, 'utf8'));
-    workflowConfigs = Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+    workflowConfigs = Array.isArray(parsed)
+      ? parsed.filter(Boolean).map((item) => normalizeWorkflowConfig(WorkflowConfigSchema.parse(item)))
+      : [];
     rebuildWorkflowMaps();
   } catch (err) {
     logger.warn({ err }, 'Failed to load workflow config');
@@ -176,6 +206,66 @@ function loadWorkflowConfigs() {
 }
 
 loadWorkflowConfigs();
+
+function renderAdminPage() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>XiaoMCP Tool Manager</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:1100px;margin:32px auto;padding:0 16px;background:#0b1020;color:#e8ecf3}
+    .wrap{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px}.card{background:#141a2e;border:1px solid #27304d;border-radius:16px;padding:18px}
+    input,textarea{width:100%;box-sizing:border-box;background:#0e1426;color:#fff;border:1px solid #334064;border-radius:10px;padding:10px;margin-top:6px}
+    textarea{min-height:84px} button{background:#6d7cff;color:#fff;border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
+    button.alt{background:#24304f} button.danger{background:#b94b63} .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .item{border:1px solid #27304d;border-radius:12px;padding:12px;margin-bottom:10px}.muted{color:#9aa7c2;font-size:13px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}.top{display:flex;justify-content:space-between;align-items:center;gap:12px} pre{white-space:pre-wrap}
+    @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="top"><div><h1 style="margin:0">XiaoMCP Tool Manager</h1><div class="muted">Buat/edit tool workflow untuk Xiaozhi bridge.</div></div><button class="alt" onclick="loadTools()">Refresh</button></div>
+  <div class="wrap" style="margin-top:20px">
+    <div class="card">
+      <h3>Daftar tool</h3>
+      <div id="toolList"></div>
+    </div>
+    <div class="card">
+      <h3 id="formTitle">Buat tool baru</h3>
+      <form id="toolForm">
+        <input type="hidden" id="originalId" />
+        <label>Workflow ID<input id="id" required placeholder="kopi_instagram" /></label>
+        <label>Tool name<input id="toolName" required placeholder="kopi_instagram" /></label>
+        <label>Read tool name<input id="readToolName" placeholder="baca_hasil_kopi_instagram" /></label>
+        <div class="row">
+          <label>Aliases (pisahkan koma)<input id="aliases" placeholder="buat_kopi_instagram" /></label>
+          <label>Read aliases (pisahkan koma)<input id="readAliases" placeholder="cek_kopi_instagram" /></label>
+        </div>
+        <label>Deskripsi run<textarea id="description"></textarea></label>
+        <label>Deskripsi read<textarea id="readDescription"></textarea></label>
+        <div class="actions"><button type="submit">Simpan</button><button type="button" class="alt" onclick="resetForm()">Reset</button></div>
+      </form>
+      <p class="muted" id="status"></p>
+    </div>
+  </div>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const splitCsv = (v) => v.split(',').map(x => x.trim()).filter(Boolean);
+  let tools = [];
+  function esc(s){return String(s||'').replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]))}
+  function setStatus(msg){$('status').textContent = msg || ''}
+  function resetForm(){ $('formTitle').textContent='Buat tool baru'; $('originalId').value=''; $('toolForm').reset(); setStatus(''); }
+  function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; $('formTitle').textContent='Edit tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('readToolName').value=t.readToolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('readAliases').value=(t.readAliases||[]).join(', '); $('description').value=t.description||''; $('readDescription').value=t.readDescription||''; window.scrollTo({top:0,behavior:'smooth'}); }
+  async function deleteTool(id){ if(!confirm('Hapus tool '+id+'?')) return; const r = await fetch('/admin/api/tools/'+encodeURIComponent(id), {method:'DELETE'}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Terhapus' : 'Gagal')); if(r.ok) loadTools(); }
+  function renderList(){ $('toolList').innerHTML = tools.length ? tools.map(function(t){ var readPart = t.readToolName ? ' · read: ' + esc(t.readToolName) : ''; return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + readPart + '</div></div><div class="actions"><button class="alt" onclick="editTool(\'' + esc(t.id) + '\')">Edit</button><button class="danger" onclick="deleteTool(\'' + esc(t.id) + '\')">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div><div class="muted">read aliases: ' + esc((t.readAliases||[]).join(', ')||'-') + '</div></div>'; }).join('') : '<div class="muted">Belum ada workflow custom.</div>'; }
+  async function loadTools(){ const r = await fetch('/admin/api/tools'); const j = await r.json(); tools = j.tools || []; renderList(); }
+  $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:$('readToolName').value.trim(), aliases:splitCsv($('aliases').value), readAliases:splitCsv($('readAliases').value), description:$('description').value.trim(), readDescription:$('readDescription').value.trim() }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
+  loadTools();
+</script>
+</body></html>`;
+}
 
 function send(obj: unknown) {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -436,6 +526,50 @@ async function startWs() {
 
 fastify.get('/healthz', async () => ({ ok: true, websocket: Boolean(ws && ws.readyState === WebSocket.OPEN) }));
 fastify.get('/tools', async () => ({ tools: customTools }));
+fastify.get('/admin/tools', async (_request, reply) => {
+  reply.header('content-type', 'text/html; charset=utf-8');
+  return renderAdminPage();
+});
+fastify.get('/admin/api/tools', async () => ({ tools: workflowConfigs }));
+fastify.post('/admin/api/tools', async (request, reply) => {
+  try {
+    const parsed = normalizeWorkflowConfig(WorkflowConfigSchema.parse(request.body));
+    if (workflowConfigs.some((item) => item.id === parsed.id)) {
+      return reply.status(409).send({ message: 'Workflow ID sudah ada.' });
+    }
+    workflowConfigs.push(parsed);
+    saveWorkflowConfigs();
+    return { ok: true, message: 'Tool berhasil dibuat.', tool: parsed };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.put('/admin/api/tools/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as { id: string };
+    const idx = workflowConfigs.findIndex((item) => item.id === id);
+    if (idx === -1) return reply.status(404).send({ message: 'Tool tidak ditemukan.' });
+    const parsed = normalizeWorkflowConfig(WorkflowConfigSchema.parse(request.body));
+    if (parsed.id !== id && workflowConfigs.some((item) => item.id === parsed.id)) {
+      return reply.status(409).send({ message: 'Workflow ID baru sudah dipakai.' });
+    }
+    workflowConfigs[idx] = parsed;
+    saveWorkflowConfigs();
+    return { ok: true, message: 'Tool berhasil diupdate.', tool: parsed };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.delete('/admin/api/tools/:id', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const before = workflowConfigs.length;
+  workflowConfigs = workflowConfigs.filter((item) => item.id !== id);
+  if (workflowConfigs.length === before) {
+    return reply.status(404).send({ message: 'Tool tidak ditemukan.' });
+  }
+  saveWorkflowConfigs();
+  return { ok: true, message: 'Tool berhasil dihapus.' };
+});
 fastify.post('/reload-workflows', async () => {
   loadWorkflowConfigs();
   return { ok: true, count: workflowConfigs.length };
