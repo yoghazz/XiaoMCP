@@ -63,11 +63,19 @@ cp .env.example .env 2>/dev/null || true
 docker compose up -d --build
 ```
 
+Set juga kredensial admin bridge:
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=ganti-password-kuat
+```
+
 Lalu buka:
 ```bash
 http://localhost:3100/admin/tools
 ```
 untuk membuat tool baru dari browser.
+
+> UI admin dilindungi HTTP Basic Auth. Jika `ADMIN_USERNAME` / `ADMIN_PASSWORD` belum diisi, UI admin otomatis nonaktif.
 
 Atau minimal siapkan env shell:
 ```bash

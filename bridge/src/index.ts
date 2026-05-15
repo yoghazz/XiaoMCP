@@ -26,6 +26,8 @@ const WORKFLOWS_CONFIG_PATH = process.env.WORKFLOWS_CONFIG_PATH || path.resolve(
 const STATE_PATH = process.env.BRIDGE_STATE_PATH || path.resolve(process.cwd(), '.bridge-state.json');
 const KEEPALIVE_MS = Number(process.env.KEEPALIVE_MS || 20000);
 const RECONNECT_MS = Number(process.env.RECONNECT_MS || 3000);
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 const client = axios.create({
   baseURL: API_URL,
@@ -206,6 +208,34 @@ function loadWorkflowConfigs() {
 }
 
 loadWorkflowConfigs();
+
+function unauthorizedAdmin(reply: any) {
+  reply.header('WWW-Authenticate', 'Basic realm="XiaoMCP Admin"');
+  return reply.status(401).send('Unauthorized');
+}
+
+function verifyAdminAuth(request: any, reply: any) {
+  if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+    return reply.status(403).send({ message: 'Admin UI disabled. Set ADMIN_USERNAME and ADMIN_PASSWORD first.' });
+  }
+
+  const header = String(request.headers.authorization || '');
+  if (!header.startsWith('Basic ')) {
+    return unauthorizedAdmin(reply);
+  }
+
+  try {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
+    const sep = decoded.indexOf(':');
+    const username = sep >= 0 ? decoded.slice(0, sep) : decoded;
+    const password = sep >= 0 ? decoded.slice(sep + 1) : '';
+    if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
+      return unauthorizedAdmin(reply);
+    }
+  } catch {
+    return unauthorizedAdmin(reply);
+  }
+}
 
 function renderAdminPage() {
   return `<!doctype html>
@@ -523,6 +553,13 @@ async function startWs() {
     scheduleReconnect('websocket closed');
   });
 }
+
+fastify.addHook('preHandler', async (request, reply) => {
+  if (request.url.startsWith('/admin/')) {
+    const result = verifyAdminAuth(request, reply);
+    if (result) return result;
+  }
+});
 
 fastify.get('/healthz', async () => ({ ok: true, websocket: Boolean(ws && ws.readyState === WebSocket.OPEN) }));
 fastify.get('/tools', async () => ({ tools: customTools }));
