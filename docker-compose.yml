@@ -20,13 +20,30 @@ services:
     restart: always
     environment:
       DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-xo_db}?schema=public
-      API_KEY: ${API_KEY}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      API_KEY: ${API_KEY:-change-me}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      HOST: 0.0.0.0
+      PORT: 3000
     ports:
       - "3000:3000"
     depends_on:
       - postgres
+
+  bridge:
+    build: ./bridge
+    container_name: xo_bridge
+    restart: always
+    environment:
+      ORCHESTRATOR_URL: http://orchestrator:3000
+      API_KEY: ${API_KEY:-change-me}
+      HOST: 0.0.0.0
+      PORT: 3100
+      DEFAULT_WORKFLOW: ${DEFAULT_WORKFLOW:-openclaw_chat}
+    ports:
+      - "3100:3100"
+    depends_on:
+      - orchestrator
 
 volumes:
   postgres_data:

@@ -1,0 +1,18 @@
+[
+  {
+    "id": "kopi_instagram",
+    "toolName": "kopi_instagram",
+    "readToolName": "baca_hasil_kopi_instagram",
+    "description": "Jalankan workflow kopi instagram.",
+    "readDescription": "Baca hasil/status terakhir workflow kopi instagram.",
+    "aliases": ["buat_kopi_instagram"],
+    "readAliases": ["cek_kopi_instagram"]
+  },
+  {
+    "id": "openclaw_chat",
+    "toolName": "openclaw_chat",
+    "readToolName": "baca_hasil_openclaw_chat",
+    "description": "Kirim task async umum ke OpenClaw.",
+    "readDescription": "Baca hasil/status terakhir task async umum."
+  }
+]

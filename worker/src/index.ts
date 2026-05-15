@@ -16,80 +16,120 @@ const logger = pino({
 });
 
 const API_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3000';
-const API_KEY = process.env.API_KEY || 'default-secret';
+const API_KEY = process.env.API_KEY || 'change-me';
 const WORKER_NAME = process.env.WORKER_NAME || 'local-worker';
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
+const EXECUTION_MODE = process.env.EXECUTION_MODE || 'demo';
+const OPENCLAW_CMD = process.env.OPENCLAW_CMD || 'echo';
+const OPENCLAW_ARGS_TEMPLATE = process.env.OPENCLAW_ARGS_TEMPLATE || 'Simulating OpenClaw run for {{workflow}}: {{text}}';
 
 const client = axios.create({
   baseURL: API_URL,
-  headers: { 'x-api-key': API_KEY }
+  headers: { 'x-api-key': API_KEY },
+  timeout: 30000,
+  validateStatus: () => true,
 });
 
-async function pollForJobs() {
-  logger.info('Polling for jobs...');
+let workerId: string | undefined;
+
+function shellEscape(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function renderTemplate(template: string, vars: Record<string, string>) {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+async function sendHeartbeat() {
+  const response = await client.post('/v1/worker/heartbeat', { workerId, name: WORKER_NAME });
+  if (response.status >= 400) {
+    throw new Error(`Heartbeat failed with status ${response.status}`);
+  }
+  workerId = response.data.id;
+}
+
+async function claimJob() {
+  const response = await client.post('/v1/worker/claim-next', { workerId, workerName: WORKER_NAME });
+  if (response.status === 204) return null;
+  if (response.status >= 400) throw new Error(`Claim failed with status ${response.status}`);
+  return response.data;
+}
+
+async function updateJob(jobId: string, payload: Record<string, any>) {
+  const response = await client.patch(`/v1/jobs/${jobId}`, payload);
+  if (response.status >= 400) {
+    throw new Error(`Update failed with status ${response.status}: ${JSON.stringify(response.data)}`);
+  }
+}
+
+async function executeJob(job: any) {
+  const text = String(job.inputParams?.original_text ?? '');
+  logger.info(`Executing job ${job.id} (${job.workflowName}) in mode=${EXECUTION_MODE}`);
+
+  await updateJob(job.id, {
+    event: { type: 'PROGRESS', message: 'Starting task execution...' }
+  });
+
   try {
-    const response = await client.get('/v1/worker/next-job');
-    
-    if (response.status === 204) {
-      return; // No jobs
+    let summary: string;
+
+    if (EXECUTION_MODE === 'openclaw') {
+      const renderedArgs = renderTemplate(OPENCLAW_ARGS_TEMPLATE, {
+        workflow: String(job.workflowName),
+        text,
+      });
+      const command = `${OPENCLAW_CMD} ${renderedArgs}`;
+      const { stdout, stderr } = await execAsync(command, { maxBuffer: 5 * 1024 * 1024 });
+      if (stderr?.trim()) {
+        await updateJob(job.id, { event: { type: 'LOG', message: stderr.trim() } });
+      }
+      summary = (stdout || '').trim() || `Workflow ${job.workflowName} executed.`;
+    } else {
+      const safeText = text.slice(0, 500);
+      const { stdout } = await execAsync(`echo ${shellEscape(`Workflow ${job.workflowName} menerima: ${safeText}`)}`);
+      summary = stdout.trim();
     }
 
-    const job = response.data;
-    logger.info(`Found job: ${job.id} (${job.workflowName})`);
-
-    // 1. Mark as running
-    await client.patch(`/v1/jobs/${job.id}`, {
-      status: 'RUNNING',
-      event: { type: 'PROGRESS', message: 'Starting OpenClaw task...' }
+    await updateJob(job.id, {
+      status: 'COMPLETED',
+      resultData: {
+        summary,
+        workflow: job.workflowName,
+        timestamp: new Date().toISOString(),
+      },
+      event: { type: 'PROGRESS', message: 'Task finished successfully.' }
     });
-
-    // 2. Execute OpenClaw
-    logger.info(`Executing workflow: ${job.workflowName}`);
-    
-    try {
-      // Misal: openclaw run --workflow research --input "..."
-      const command = `echo "Simulating OpenClaw run for ${job.workflowName}"`; 
-      const { stdout, stderr } = await execAsync(command);
-      
-      if (stderr) logger.warn(`OpenClaw stderr: ${stderr}`);
-
-      // 3. Mark as completed
-      await client.patch(`/v1/jobs/${job.id}`, {
-        status: 'COMPLETED',
-        resultData: { 
-          summary: stdout.trim() || `Workflow ${job.workflowName} executed.`,
-          timestamp: new Date().toISOString()
-        },
-        event: { type: 'PROGRESS', message: 'Task finished successfully.' }
-      });
-    } catch (execError) {
-      logger.error(`Execution error: ${(execError as Error).message}`);
-      await client.patch(`/v1/jobs/${job.id}`, {
-        status: 'FAILED',
-        event: { type: 'ERROR', message: `Execution failed: ${(execError as Error).message}` }
-      });
-    }
-
-    logger.info(`Job ${job.id} completed.`);
-  } catch (error) {
-    logger.error(`Error polling jobs: ${(error as Error).message}`);
+  } catch (execError) {
+    logger.error({ err: execError }, `Execution error for job ${job.id}`);
+    await updateJob(job.id, {
+      status: 'FAILED',
+      event: { type: 'ERROR', message: `Execution failed: ${(execError as Error).message}` }
+    });
   }
 }
 
 async function start() {
   logger.info(`Worker ${WORKER_NAME} starting...`);
-  
-  // Heartbeat loop
-  setInterval(async () => {
-    try {
-      await client.post('/v1/worker/heartbeat', { name: WORKER_NAME });
-    } catch (e) {}
+
+  await sendHeartbeat();
+  setInterval(() => {
+    sendHeartbeat().catch((err) => logger.error({ err }, 'Heartbeat failed'));
   }, 30000);
 
-  // Job loop
   while (true) {
-    await pollForJobs();
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
+    try {
+      const job = await claimJob();
+      if (job) {
+        await executeJob(job);
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Worker loop error');
+    }
+    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
 }
 
-start();
+start().catch((err) => {
+  logger.error({ err }, 'Worker failed to start');
+  process.exit(1);
+});

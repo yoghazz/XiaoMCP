@@ -1,0 +1,26 @@
+{
+  "name": "xo-bridge",
+  "version": "1.0.0",
+  "description": "Xiaozhi edge bridge for XiaoMCP",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.27.0",
+    "pino": "^9.1.0",
+    "pino-pretty": "^11.1.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.10.5",
+    "typescript": "^5.4.5"
+  }
+}

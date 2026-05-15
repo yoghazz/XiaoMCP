@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -15,38 +15,51 @@ enum JobStatus {
   TIMEOUT
 }
 
+enum WorkerStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum EventType {
+  PROGRESS
+  LOG
+  ERROR
+}
+
 model Worker {
-  id             String       @id @default(uuid())
-  name           String
-  status         String       @default("OFFLINE")
-  lastHeartbeat  DateTime     @default(now())
-  jobs           Job[]
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id            String       @id @default(uuid())
+  name          String       @unique
+  status        WorkerStatus @default(OFFLINE)
+  lastHeartbeat DateTime     @default(now())
+  jobs          Job[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }
 
 model Job {
-  id             String       @id @default(uuid())
-  correlationId  String?      @unique
-  workflowName   String
-  inputParams    String       // Store as string/JSON for SQLite compatibility
-  status         String       @default("PENDING")
-  resultData     String?      // Store as string/JSON for SQLite compatibility
-  workerId       String?
-  worker         Worker?      @relation(fields: [workerId], references: [id])
-  events         JobEvent[]
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id            String      @id @default(uuid())
+  correlationId String?     @unique
+  workflowName  String
+  inputParams   Json
+  status        JobStatus   @default(PENDING)
+  resultData    Json?
+  source        String?
+  userId        String?
+  workerId      String?
+  worker        Worker?     @relation(fields: [workerId], references: [id])
+  events        JobEvent[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@index([status])
 }
 
 model JobEvent {
-  id             Int          @id @default(autoincrement())
-  jobId          String
-  job            Job          @relation(fields: [jobId], references: [id])
-  eventType      String
-  message        String
-  payload        String?      // Store as string/JSON for SQLite compatibility
-  createdAt      DateTime     @default(now())
+  id        Int      @id @default(autoincrement())
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id])
+  eventType EventType
+  message   String
+  payload   Json?
+  createdAt DateTime @default(now())
 }
