@@ -3,6 +3,8 @@ import pino from 'pino';
 import dotenv from 'dotenv';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const execAsync = promisify(exec);
 
@@ -22,6 +24,7 @@ const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 5000);
 const EXECUTION_MODE = process.env.EXECUTION_MODE || 'demo';
 const OPENCLAW_CMD = process.env.OPENCLAW_CMD || 'echo';
 const OPENCLAW_ARGS_TEMPLATE = process.env.OPENCLAW_ARGS_TEMPLATE || 'Simulating OpenClaw run for {{workflow}}: {{text}}';
+const WORKFLOW_ROUTER_PATH = process.env.WORKFLOW_ROUTER_PATH || '/home/yoga/.openclaw/workspace/XiaoMCP/worker/workflow-router.json';
 
 const client = axios.create({
   baseURL: API_URL,
@@ -38,6 +41,36 @@ function shellEscape(value: string) {
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+function loadWorkflowRouter(): Record<string, { cmd?: string; argsTemplate?: string }> {
+  try {
+    const raw = fs.readFileSync(WORKFLOW_ROUTER_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getLastActiveSessionId(): string {
+  const dir = '/home/yoga/.openclaw/agents/main/sessions';
+  const files = fs.readdirSync(dir)
+    .filter((name) => name.endsWith('.jsonl'))
+    .filter((name) => !name.includes('.trajectory.'))
+    .filter((name) => !name.includes('.checkpoint.'))
+    .filter((name) => !name.startsWith('sessions.json'))
+    .map((name) => ({
+      name,
+      full: path.join(dir, name),
+      mtime: fs.statSync(path.join(dir, name)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtime - a.mtime);
+  for (const file of files) {
+    const id = file.name.replace(/\.jsonl$/, '').trim();
+    if (/^[0-9a-f-]{20,}$/i.test(id)) return id;
+  }
+  throw new Error('Tidak menemukan session OpenClaw aktif');
 }
 
 async function sendHeartbeat() {
@@ -74,11 +107,18 @@ async function executeJob(job: any) {
     let summary: string;
 
     if (EXECUTION_MODE === 'openclaw') {
-      const renderedArgs = renderTemplate(OPENCLAW_ARGS_TEMPLATE, {
+      const router = loadWorkflowRouter();
+      const route = router[String(job.workflowName)] || {};
+      const cmd = route.cmd || OPENCLAW_CMD;
+      const argsTemplate = route.argsTemplate || OPENCLAW_ARGS_TEMPLATE;
+      const activeSessionId = getLastActiveSessionId();
+      const renderedArgs = renderTemplate(argsTemplate, {
         workflow: String(job.workflowName),
         text,
+        activeSessionId,
       });
-      const command = `${OPENCLAW_CMD} ${renderedArgs}`;
+      const command = `${cmd} ${renderedArgs}`;
+      logger.info({ workflow: job.workflowName, activeSessionId, command }, 'Resolved OpenClaw execution route');
       const { stdout, stderr } = await execAsync(command, { maxBuffer: 5 * 1024 * 1024 });
       if (stderr?.trim()) {
         await updateJob(job.id, { event: { type: 'LOG', message: stderr.trim() } });

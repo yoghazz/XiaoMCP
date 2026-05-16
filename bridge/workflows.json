@@ -1,0 +1,133 @@
+[
+  {
+    "id": "prr",
+    "toolName": "workflow_prr",
+    "readToolName": "hasil_prr_terakhir",
+    "description": "Workflow PRR. Perintah user diteruskan ke OpenClaw melalui worker XiaoMCP.",
+    "readDescription": "Baca hasil workflow PRR terakhir.",
+    "aliases": [
+      "jumlah_prr",
+      "prr_json",
+      "prr_excel"
+    ],
+    "readAliases": [
+      "baca_hasil_prr"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "setiti",
+    "toolName": "workflow_setiti_count",
+    "readToolName": "hasil_setiti_count_terakhir",
+    "description": "Workflow Setiti Count. Perintah user diteruskan ke OpenClaw melalui worker XiaoMCP.",
+    "readDescription": "Baca hasil workflow Setiti Count terakhir.",
+    "aliases": [
+      "jumlah_setiti",
+      "total_setiti"
+    ],
+    "readAliases": [
+      "baca_hasil_setiti",
+      "baca_jumlah_setiti"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "donita-stok-total",
+    "toolName": "workflow_donita_stok_total",
+    "readToolName": "hasil_donita_stok_total_terakhir",
+    "description": "Workflow Donita stok blangko total.",
+    "readDescription": "Baca hasil stok blangko total Donita terakhir.",
+    "aliases": [
+      "stok_blangko_total",
+      "total_stok_blangko"
+    ],
+    "readAliases": [
+      "baca_hasil_stok_blangko_total"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "donita-stok-wilayah",
+    "toolName": "workflow_donita_stok_wilayah",
+    "readToolName": "hasil_donita_stok_wilayah_terakhir",
+    "description": "Workflow Donita stok blangko per wilayah.",
+    "readDescription": "Baca hasil stok blangko wilayah Donita terakhir.",
+    "aliases": [
+      "stok_blangko_wilayah"
+    ],
+    "readAliases": [
+      "baca_hasil_stok_blangko_wilayah"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "donita-pengajuan-total",
+    "toolName": "workflow_donita_pengajuan_total",
+    "readToolName": "hasil_donita_pengajuan_total_terakhir",
+    "description": "Workflow Donita total pengajuan per tanggal.",
+    "readDescription": "Baca hasil total pengajuan Donita terakhir.",
+    "aliases": [
+      "pengajuan_donita_total",
+      "total_pengajuan_donita"
+    ],
+    "readAliases": [
+      "baca_hasil_pengajuan_donita_total"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "donita-pengajuan-dokumen-tanggal",
+    "toolName": "workflow_donita_pengajuan_dokumen_tanggal",
+    "readToolName": "hasil_donita_pengajuan_dokumen_tanggal_terakhir",
+    "description": "Workflow Donita pengajuan per dokumen per tanggal.",
+    "readDescription": "Baca hasil pengajuan per dokumen Donita terakhir.",
+    "aliases": [
+      "pengajuan_donita_per_dokumen",
+      "pengajuan_per_dokumen_donita"
+    ],
+    "readAliases": [
+      "baca_hasil_pengajuan_dokumen_donita"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "donita-jumlah-loket",
+    "toolName": "workflow_donita_jumlah_loket",
+    "readToolName": "hasil_donita_jumlah_loket_terakhir",
+    "description": "Workflow Donita jumlah loket per tanggal.",
+    "readDescription": "Baca hasil jumlah loket Donita terakhir.",
+    "aliases": [
+      "jumlah_loket",
+      "total_loket_donita"
+    ],
+    "readAliases": [
+      "baca_hasil_jumlah_loket_donita"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  {
+    "id": "cari-di-internet",
+    "toolName": "workflow_cari_di_internet",
+    "readToolName": "baca_hasil_cari_di_internet",
+    "description": "workflow cari di internet",
+    "readDescription": "workflow baca hasil cari di internet",
+    "aliases": [
+      "cari_di_internet",
+      "cari_internet"
+    ],
+    "readAliases": [
+      "baca_hasil_cari_di_internet",
+      "baca_cari_di_internet",
+      "baca_cari_internet"
+    ],
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\""
+  }
+]

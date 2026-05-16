@@ -1,0 +1,34 @@
+{
+  "prr": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "setiti": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "donita-stok-total": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "donita-stok-wilayah": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "donita-pengajuan-total": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "donita-pengajuan-dokumen-tanggal": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "donita-jumlah-loket": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+  },
+  "cari-di-internet": {
+    "cmd": "openclaw",
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\""
+  }
+}

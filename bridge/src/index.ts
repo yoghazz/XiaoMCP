@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn, exec as execChild } from 'node:child_process';
 import Fastify from 'fastify';
 import axios from 'axios';
 import pino from 'pino';
@@ -53,6 +54,8 @@ type WorkflowConfig = {
   readDescription?: string;
   aliases?: string[];
   readAliases?: string[];
+  cmd?: string;
+  argsTemplate?: string;
 };
 
 const WorkflowConfigSchema = z.object({
@@ -63,6 +66,8 @@ const WorkflowConfigSchema = z.object({
   readDescription: z.string().optional(),
   aliases: z.array(z.string()).optional(),
   readAliases: z.array(z.string()).optional(),
+  cmd: z.string().optional(),
+  argsTemplate: z.string().optional(),
 });
 
 type BridgeState = {
@@ -179,12 +184,22 @@ function normalizeWorkflowConfig(input: z.infer<typeof WorkflowConfigSchema>): W
     readDescription: input.readDescription?.trim() || undefined,
     aliases: (input.aliases || []).map((x) => x.trim()).filter(Boolean),
     readAliases: (input.readAliases || []).map((x) => x.trim()).filter(Boolean),
+    cmd: input.cmd?.trim() || undefined,
+    argsTemplate: input.argsTemplate?.trim() || undefined,
   };
 }
 
 function saveWorkflowConfigs() {
   ensureParentDir(WORKFLOWS_CONFIG_PATH);
   fs.writeFileSync(WORKFLOWS_CONFIG_PATH, JSON.stringify(workflowConfigs, null, 2));
+  const routerPath = '/home/yoga/.openclaw/workspace/XiaoMCP/worker/workflow-router.json';
+  const router: Record<string, { cmd?: string; argsTemplate?: string }> = {};
+  for (const wf of workflowConfigs) {
+    if (wf.cmd || wf.argsTemplate) {
+      router[wf.id] = { cmd: wf.cmd, argsTemplate: wf.argsTemplate };
+    }
+  }
+  fs.writeFileSync(routerPath, JSON.stringify(router, null, 2));
   rebuildWorkflowMaps();
 }
 
@@ -238,61 +253,136 @@ function verifyAdminAuth(request: any, reply: any) {
 }
 
 function renderAdminPage() {
+  const initialTools = JSON.stringify(workflowConfigs);
+  const initialSettings = JSON.stringify({
+    orchestratorUrl: API_URL,
+    defaultWorkflow: DEFAULT_WORKFLOW,
+    workflowsConfigPath: WORKFLOWS_CONFIG_PATH,
+    bridgeStatePath: STATE_PATH,
+    host: HOST,
+    port: PORT,
+    keepaliveMs: KEEPALIVE_MS,
+    reconnectMs: RECONNECT_MS,
+    xiaozhiWsUrl: XIAOZHI_WS_URL,
+    websocketActive: Boolean(ws && ws.readyState === WebSocket.OPEN),
+    adminAuthEnabled: Boolean(ADMIN_USERNAME && ADMIN_PASSWORD),
+    workflowCount: workflowConfigs.length,
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>XiaoMCP Tool Manager</title>
+  <title>XiaoMCP Admin</title>
   <style>
-    body{font-family:system-ui,sans-serif;max-width:1100px;margin:32px auto;padding:0 16px;background:#0b1020;color:#e8ecf3}
-    .wrap{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px}.card{background:#141a2e;border:1px solid #27304d;border-radius:16px;padding:18px}
+    body{font-family:system-ui,sans-serif;max-width:1180px;margin:32px auto;padding:0 16px;background:#0b1020;color:#e8ecf3}
+    .card{background:#141a2e;border:1px solid #27304d;border-radius:16px;padding:18px}
+    .wrap{display:grid;grid-template-columns:1.1fr 0.9fr;gap:20px}
+    .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+    .tab-btn{background:#24304f}.tab-btn.active{background:#6d7cff}
+    .tab{display:none;margin-top:18px}.tab.active{display:block}
     input,textarea{width:100%;box-sizing:border-box;background:#0e1426;color:#fff;border:1px solid #334064;border-radius:10px;padding:10px;margin-top:6px}
     textarea{min-height:84px} button{background:#6d7cff;color:#fff;border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
     button.alt{background:#24304f} button.danger{background:#b94b63} .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
     .item{border:1px solid #27304d;border-radius:12px;padding:12px;margin-bottom:10px}.muted{color:#9aa7c2;font-size:13px}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}.top{display:flex;justify-content:space-between;align-items:center;gap:12px} pre{white-space:pre-wrap}
-    @media(max-width:900px){.wrap{grid-template-columns:1fr}}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .kv{display:grid;grid-template-columns:220px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid #27304d}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+    @media(max-width:900px){.wrap,.row,.kv{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <div class="top"><div><h1 style="margin:0">XiaoMCP Tool Manager</h1><div class="muted">Buat/edit tool workflow untuk Xiaozhi bridge.</div></div><button class="alt" onclick="loadTools()">Refresh</button></div>
-  <div class="wrap" style="margin-top:20px">
-    <div class="card">
-      <h3>Daftar tool</h3>
-      <div id="toolList"></div>
-    </div>
-    <div class="card">
-      <h3 id="formTitle">Buat tool baru</h3>
-      <form id="toolForm">
-        <input type="hidden" id="originalId" />
-        <label>Workflow ID<input id="id" required placeholder="kopi_instagram" /></label>
-        <label>Tool name<input id="toolName" required placeholder="kopi_instagram" /></label>
-        <label>Read tool name<input id="readToolName" placeholder="baca_hasil_kopi_instagram" /></label>
-        <div class="row">
-          <label>Aliases (pisahkan koma)<input id="aliases" placeholder="buat_kopi_instagram" /></label>
-          <label>Read aliases (pisahkan koma)<input id="readAliases" placeholder="cek_kopi_instagram" /></label>
-        </div>
-        <label>Deskripsi run<textarea id="description"></textarea></label>
-        <label>Deskripsi read<textarea id="readDescription"></textarea></label>
-        <div class="actions"><button type="submit">Simpan</button><button type="button" class="alt" onclick="resetForm()">Reset</button></div>
-      </form>
-      <p class="muted" id="status"></p>
-    </div>
+  <div class="top"><div><h1 style="margin:0">XiaoMCP Admin</h1><div class="muted">Kelola workflow dan setting untuk Xiaozhi bridge.</div></div><button class="alt" type="button" onclick="refreshActiveTab()">Refresh</button></div>
+  <div class="tabs">
+    <button class="tab-btn active" type="button" data-tab="workflow" onclick="switchTab('workflow')">Workflow</button>
+    <button class="tab-btn" type="button" data-tab="router" onclick="switchTab('router')">Router</button>
+    <button class="tab-btn" type="button" data-tab="setting" onclick="switchTab('setting')">Setting</button>
   </div>
+  <section id="tab-workflow" class="tab active">
+    <div class="wrap" style="margin-top:20px">
+      <div class="card">
+        <h3>Daftar workflow tool</h3>
+        <div id="toolList"></div>
+      </div>
+      <div class="card">
+        <h3 id="formTitle">Buat workflow tool baru</h3>
+        <form id="toolForm">
+          <input type="hidden" id="originalId" />
+          <label>Workflow ID<input id="id" required placeholder="kopi_instagram" /></label>
+          <label>Tool name<input id="toolName" required placeholder="kopi_instagram" /></label>
+          <label>Read tool name<input id="readToolName" placeholder="baca_hasil_kopi_instagram" /></label>
+          <div class="row">
+            <label>Aliases (pisahkan koma)<input id="aliases" placeholder="buat_kopi_instagram" /></label>
+            <label>Read aliases (pisahkan koma)<input id="readAliases" placeholder="cek_kopi_instagram" /></label>
+          </div>
+          <label>Deskripsi run<textarea id="description"></textarea></label>
+          <label>Deskripsi read<textarea id="readDescription"></textarea></label>
+          <label>Command<input id="cmd" placeholder="openclaw" /></label>
+          <label>Args template<textarea id="argsTemplate" placeholder="agent --json --session-id {{activeSessionId}} --message &quot;{{text}}&quot;"></textarea></label>
+          <div class="muted" style="margin-top:6px">Variabel tersedia: <code>{{text}}</code>, <code>{{activeSessionId}}</code></div>
+          <div class="actions"><button type="submit">Simpan</button><button type="button" class="alt" onclick="resetForm()">Reset</button></div>
+        </form>
+        <p class="muted" id="status"></p>
+      </div>
+    </div>
+  </section>
+  <section id="tab-router" class="tab">
+    <div class="card" style="margin-top:20px">
+      <h3>Workflow Router</h3>
+      <div class="muted">Atur command dan args template per workflow untuk worker XiaoMCP.</div>
+      <textarea id="routerJson" style="min-height:320px;margin-top:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace"></textarea>
+      <div class="actions" style="margin-top:12px"><button type="button" id="saveRouterBtn">Simpan Router</button><button type="button" class="alt" id="reloadRouterBtn">Reload Router</button></div>
+      <p class="muted" id="routerStatus"></p>
+    </div>
+  </section>
+  <section id="tab-setting" class="tab">
+    <div class="card" style="margin-top:20px">
+      <h3>Setting bridge</h3>
+      <div id="settingsBox"></div>
+      <form id="settingsForm" style="margin-top:18px">
+        <div class="row">
+          <label>Orchestrator URL<input id="s_orchestratorUrl" /></label>
+          <label>Default workflow<input id="s_defaultWorkflow" /></label>
+        </div>
+        <div class="row">
+          <label>Host<input id="s_host" /></label>
+          <label>Port<input id="s_port" type="number" /></label>
+        </div>
+        <div class="row">
+          <label>Keepalive ms<input id="s_keepaliveMs" type="number" /></label>
+          <label>Reconnect ms<input id="s_reconnectMs" type="number" /></label>
+        </div>
+        <label>Xiaozhi WS URL<input id="s_xiaozhiWsUrl" /></label>
+        <div class="actions" style="margin-top:12px"><button type="submit">Simpan Setting</button><button type="button" class="alt" id="restartBridgeBtn">Restart Bridge</button></div>
+      </form>
+      <p class="muted" id="settingsStatus"></p>
+    </div>
+  </section>
 <script>
   const $ = (id) => document.getElementById(id);
   const splitCsv = (v) => v.split(',').map(x => x.trim()).filter(Boolean);
-  let tools = [];
-  function esc(s){return String(s||'').replace(/[&<>\"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]))}
+  let tools = ${initialTools};
+  let currentTab = 'workflow';
+  const initialSettings = ${initialSettings};
+  function esc(s){return String(s||'').replace(/[&<>"']/g,function(c){ if(c==='&') return '&amp;'; if(c==='<') return '&lt;'; if(c==='>') return '&gt;'; if(c==='\"') return '&quot;'; return '&#39;'; })}
   function setStatus(msg){$('status').textContent = msg || ''}
-  function resetForm(){ $('formTitle').textContent='Buat tool baru'; $('originalId').value=''; $('toolForm').reset(); setStatus(''); }
-  function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; $('formTitle').textContent='Edit tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('readToolName').value=t.readToolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('readAliases').value=(t.readAliases||[]).join(', '); $('description').value=t.description||''; $('readDescription').value=t.readDescription||''; window.scrollTo({top:0,behavior:'smooth'}); }
-  async function deleteTool(id){ if(!confirm('Hapus tool '+id+'?')) return; const r = await fetch('/admin/api/tools/'+encodeURIComponent(id), {method:'DELETE'}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Terhapus' : 'Gagal')); if(r.ok) loadTools(); }
-  function renderList(){ $('toolList').innerHTML = tools.length ? tools.map(function(t){ var readPart = t.readToolName ? ' · read: ' + esc(t.readToolName) : ''; return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + readPart + '</div></div><div class="actions"><button class="alt" onclick="editTool(\'' + esc(t.id) + '\')">Edit</button><button class="danger" onclick="deleteTool(\'' + esc(t.id) + '\')">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div><div class="muted">read aliases: ' + esc((t.readAliases||[]).join(', ')||'-') + '</div></div>'; }).join('') : '<div class="muted">Belum ada workflow custom.</div>'; }
-  async function loadTools(){ const r = await fetch('/admin/api/tools'); const j = await r.json(); tools = j.tools || []; renderList(); }
-  $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:$('readToolName').value.trim(), aliases:splitCsv($('aliases').value), readAliases:splitCsv($('readAliases').value), description:$('description').value.trim(), readDescription:$('readDescription').value.trim() }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
-  loadTools();
+  function setSettingsStatus(msg){$('settingsStatus').textContent = msg || ''}
+  function setRouterStatus(msg){$('routerStatus').textContent = msg || ''}
+  function resetForm(){ $('formTitle').textContent='Buat workflow tool baru'; $('originalId').value=''; $('toolForm').reset(); setStatus(''); }
+  function switchTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active')); $('tab-'+name).classList.add('active'); document.querySelector('[data-tab="'+name+'"]').classList.add('active'); refreshActiveTab(); }
+  function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else loadSettings(); }
+  function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; switchTab('workflow'); $('formTitle').textContent='Edit workflow tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('readToolName').value=t.readToolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('readAliases').value=(t.readAliases||[]).join(', '); $('description').value=t.description||''; $('readDescription').value=t.readDescription||''; $('cmd').value=t.cmd||''; $('argsTemplate').value=t.argsTemplate||''; window.scrollTo({top:0,behavior:'smooth'}); }
+  async function deleteTool(id){ if(!confirm('Hapus tool '+id+'?')) return; const r = await fetch('/admin/api/tools/'+encodeURIComponent(id), {method:'DELETE',headers:{'cache-control':'no-cache'}}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Terhapus' : 'Gagal')); if(r.ok) loadTools(); }
+  function renderList(){ if(!tools.length){ $('toolList').innerHTML='<div class="muted">Belum ada workflow tool.</div>'; return; } $('toolList').innerHTML = tools.map(function(t){ var readPart = t.readToolName ? ' · read: ' + esc(t.readToolName) : ''; return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + readPart + '</div></div><div class="actions"><button class="alt" type="button" data-edit="' + esc(t.id) + '">Edit</button><button class="danger" type="button" data-del="' + esc(t.id) + '">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div><div class="muted">read aliases: ' + esc((t.readAliases||[]).join(', ')||'-') + '</div></div>'; }).join(''); document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>editTool(el.getAttribute('data-edit'))); document.querySelectorAll('[data-del]').forEach(el=>el.onclick=()=>deleteTool(el.getAttribute('data-del'))); }
+  function renderSettings(data){ const rows = [['Orchestrator URL', data.orchestratorUrl],['Default workflow', data.defaultWorkflow],['Workflows config path', data.workflowsConfigPath],['Bridge state path', data.bridgeStatePath],['Host', data.host],['Port', data.port],['Keepalive ms', data.keepaliveMs],['Reconnect ms', data.reconnectMs],['WebSocket Xiaozhi', data.xiaozhiWsUrl || '-'],['WebSocket active', data.websocketActive ? 'yes' : 'no'],['Admin auth', data.adminAuthEnabled ? 'enabled' : 'disabled'],['Workflow count', String(data.workflowCount ?? 0)]]; $('settingsBox').innerHTML = rows.map(function(r){ return '<div class="kv"><div class="muted">'+esc(r[0])+'</div><div class="mono">'+esc(String(r[1]))+'</div></div>'; }).join(''); $('s_orchestratorUrl').value=data.orchestratorUrl||''; $('s_defaultWorkflow').value=data.defaultWorkflow||''; $('s_host').value=data.host||''; $('s_port').value=data.port||''; $('s_keepaliveMs').value=data.keepaliveMs||''; $('s_reconnectMs').value=data.reconnectMs||''; $('s_xiaozhiWsUrl').value=data.xiaozhiWsUrl||''; }
+  async function loadTools(){ const r = await fetch('/admin/api/tools',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); tools = j.tools || []; renderList(); }
+  async function loadSettings(){ const r = await fetch('/admin/api/settings',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setSettingsStatus(j.message || 'Gagal load setting'); return; } setSettingsStatus(''); renderSettings(j); }
+  async function loadRouter(){ const r = await fetch('/admin/api/router',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setRouterStatus(j.message || 'Gagal load router'); return; } $('routerJson').value = JSON.stringify(j.router || {}, null, 2); setRouterStatus(''); }
+  $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:$('readToolName').value.trim(), aliases:splitCsv($('aliases').value), readAliases:splitCsv($('readAliases').value), description:$('description').value.trim(), readDescription:$('readDescription').value.trim(), cmd:$('cmd').value.trim(), argsTemplate:$('argsTemplate').value.trim() }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
+  $('settingsForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { orchestratorUrl:$('s_orchestratorUrl').value.trim(), defaultWorkflow:$('s_defaultWorkflow').value.trim(), host:$('s_host').value.trim(), port:Number($('s_port').value||0), keepaliveMs:Number($('s_keepaliveMs').value||0), reconnectMs:Number($('s_reconnectMs').value||0), xiaozhiWsUrl:$('s_xiaozhiWsUrl').value.trim() }; const r = await fetch('/admin/api/settings',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok) loadSettings(); });
+  $('restartBridgeBtn').addEventListener('click', async () => { const ok = confirm('Restart bridge sekarang?'); if(!ok) return; const r = await fetch('/admin/api/restart-bridge',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:'{}'}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Restart diminta' : 'Gagal restart')); });
+  $('saveRouterBtn').addEventListener('click', async () => { let payload; try { payload = JSON.parse($('routerJson').value || '{}'); } catch(e) { setRouterStatus('JSON router tidak valid'); return; } const r = await fetch('/admin/api/router',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({router: payload})}); const j = await r.json(); setRouterStatus(j.message || (r.ok ? 'Router tersimpan' : 'Gagal simpan router')); });
+  $('reloadRouterBtn').addEventListener('click', async () => { await loadRouter(); setRouterStatus('Router direload'); });
+  renderList(); renderSettings(initialSettings); loadRouter();
 </script>
 </body></html>`;
 }
@@ -568,6 +658,45 @@ fastify.get('/admin/tools', async (_request, reply) => {
   return renderAdminPage();
 });
 fastify.get('/admin/api/tools', async () => ({ tools: workflowConfigs }));
+fastify.get('/admin/api/settings', async () => ({
+  orchestratorUrl: API_URL,
+  defaultWorkflow: DEFAULT_WORKFLOW,
+  workflowsConfigPath: WORKFLOWS_CONFIG_PATH,
+  bridgeStatePath: STATE_PATH,
+  host: HOST,
+  port: PORT,
+  keepaliveMs: KEEPALIVE_MS,
+  reconnectMs: RECONNECT_MS,
+  xiaozhiWsUrl: XIAOZHI_WS_URL,
+  websocketActive: Boolean(ws && ws.readyState === WebSocket.OPEN),
+  adminAuthEnabled: Boolean(ADMIN_USERNAME && ADMIN_PASSWORD),
+  workflowCount: workflowConfigs.length,
+}));
+fastify.put('/admin/api/settings', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    const envPath = path.resolve(process.cwd(), '.env');
+    let envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+    const updates: Record<string, string> = {
+      ORCHESTRATOR_URL: String(body.orchestratorUrl || ''),
+      DEFAULT_WORKFLOW: String(body.defaultWorkflow || ''),
+      HOST: String(body.host || ''),
+      PORT: String(body.port || ''),
+      KEEPALIVE_MS: String(body.keepaliveMs || ''),
+      RECONNECT_MS: String(body.reconnectMs || ''),
+      XIAOZHI_WS_URL: String(body.xiaozhiWsUrl || ''),
+    };
+    for (const [key, value] of Object.entries(updates)) {
+      const re = new RegExp(`^${key}=.*$`, 'm');
+      if (re.test(envText)) envText = envText.replace(re, `${key}=${value}`);
+      else envText += `${envText.endsWith('\n') || !envText ? '' : '\n'}${key}=${value}\n`;
+    }
+    fs.writeFileSync(envPath, envText);
+    return { ok: true, message: 'Setting berhasil disimpan. Restart bridge untuk menerapkan perubahan env.' };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
 fastify.post('/admin/api/tools', async (request, reply) => {
   try {
     const parsed = normalizeWorkflowConfig(WorkflowConfigSchema.parse(request.body));
@@ -610,6 +739,37 @@ fastify.delete('/admin/api/tools/:id', async (request, reply) => {
 fastify.post('/reload-workflows', async () => {
   loadWorkflowConfigs();
   return { ok: true, count: workflowConfigs.length };
+});
+fastify.get('/admin/api/router', async (_request, reply) => {
+  try {
+    const routerPath = '/home/yoga/.openclaw/workspace/XiaoMCP/worker/workflow-router.json';
+    const router = fs.existsSync(routerPath) ? JSON.parse(fs.readFileSync(routerPath, 'utf8')) : {};
+    return { router };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.put('/admin/api/router', async (request, reply) => {
+  try {
+    const routerPath = '/home/yoga/.openclaw/workspace/XiaoMCP/worker/workflow-router.json';
+    const body = request.body as any;
+    fs.writeFileSync(routerPath, JSON.stringify(body?.router || {}, null, 2));
+    return { ok: true, message: 'Router berhasil disimpan.' };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.post('/admin/api/restart-bridge', async (_request, reply) => {
+  try {
+    const cmd = `cd ${JSON.stringify(process.cwd())} && nohup bash -lc 'sleep 2; exec ${process.execPath} dist/index.js' >/tmp/xiaomcp-bridge.log 2>&1 &`;
+    execChild(cmd);
+    setTimeout(() => {
+      process.exit(0);
+    }, 500);
+    return { ok: true, message: 'Restart bridge diminta. Tunggu beberapa detik lalu refresh halaman.' };
+  } catch (err) {
+    return reply.status(500).send({ message: String((err as Error).message || err) });
+  }
 });
 
 fastify.post('/invoke/start_workflow', async (request, reply) => {
