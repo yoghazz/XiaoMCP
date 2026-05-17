@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-05-17T06:11:16.451Z",
+  "updatedAt": "2026-05-17T06:49:42.281Z",
   "docs": [
     {
       "id": "uu-adminduk-sample",
@@ -12,6 +12,17 @@
         "kependudukan"
       ],
       "description": ""
+    },
+    {
+      "id": "permen-sample",
+      "title": "Permen Sample",
+      "path": "permen-sample.txt",
+      "type": "text",
+      "tags": [
+        "permen",
+        "adminduk"
+      ],
+      "description": "Dokumen contoh peraturan menteri"
     }
   ]
 }

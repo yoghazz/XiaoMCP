@@ -7,6 +7,7 @@ import pino from 'pino';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import WebSocket from 'ws';
+import { addKnowledgeBaseDoc, listKnowledgeBaseDocs } from '../../shared/knowledge-base-index';
 
 dotenv.config();
 
@@ -302,6 +303,7 @@ function renderAdminPage() {
     <button class="tab-btn active" type="button" data-tab="workflow" onclick="switchTab('workflow')">Workflow</button>
     <button class="tab-btn" type="button" data-tab="router" onclick="switchTab('router')">Router</button>
     <button class="tab-btn" type="button" data-tab="log" onclick="switchTab('log')">Log</button>
+    <button class="tab-btn" type="button" data-tab="kb" onclick="switchTab('kb')">Knowledge Base</button>
     <button class="tab-btn" type="button" data-tab="setting" onclick="switchTab('setting')">Setting</button>
   </div>
   <section id="tab-workflow" class="tab active">
@@ -362,6 +364,29 @@ function renderAdminPage() {
       <p class="muted" id="logStatus"></p>
     </div>
   </section>
+  <section id="tab-kb" class="tab">
+    <div class="wrap" style="margin-top:20px">
+      <div class="card">
+        <div class="top"><div><h3 style="margin:0">Daftar dokumen knowledge base</h3><div class="muted">Referensi lokal untuk workflow knowledge-base.</div></div><button class="alt" type="button" id="reloadKbBtn">Reload KB</button></div>
+        <div id="kbList" style="margin-top:14px"></div>
+        <p class="muted" id="kbStatus"></p>
+      </div>
+      <div class="card">
+        <h3>Tambah dokumen knowledge base</h3>
+        <form id="kbForm">
+          <label>ID dokumen<input id="kb_id" required placeholder="uu-adminduk-2014" /></label>
+          <label>Judul<input id="kb_title" required placeholder="Peraturan Adminduk 2014" /></label>
+          <div class="row">
+            <label>Path file<input id="kb_path" required placeholder="uuadminduk2014.pdf" /></label>
+            <label>Tipe<select id="kb_type"><option value="pdf">pdf</option><option value="text">text</option></select></label>
+          </div>
+          <label>Tags (pisahkan koma)<input id="kb_tags" placeholder="adminduk, uu, 2014" /></label>
+          <label>Deskripsi<textarea id="kb_description"></textarea></label>
+          <div class="actions"><button type="submit">Tambah Dokumen</button></div>
+        </form>
+      </div>
+    </div>
+  </section>
   <section id="tab-setting" class="tab">
     <div class="card" style="margin-top:20px">
       <h3>Setting bridge</h3>
@@ -398,12 +423,13 @@ function renderAdminPage() {
   function setSettingsStatus(msg){$('settingsStatus').textContent = msg || ''}
   function setRouterStatus(msg){$('routerStatus').textContent = msg || ''}
   function setLogStatus(msg){$('logStatus').textContent = msg || ''}
+  function setKbStatus(msg){ const el = $('kbStatus'); if (el) el.textContent = msg || ''; }
   function setLogPageInfo(text){ $('logPageInfo').textContent = text || ''; }
   function setToolPageInfo(text){ const el = $('toolPageInfo'); if (el) el.textContent = text || ''; }
   function buildStrictArgsTemplateForUi(id){ return 'agent --json --session-id {{activeSessionId}} --message "Jalankan workflow '+id+' secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}"'; }
   function resetForm(){ $('formTitle').textContent='Buat workflow tool baru'; $('originalId').value=''; $('toolForm').reset(); $('strictMode').checked=false; setStatus(''); }
   function switchTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active')); $('tab-'+name).classList.add('active'); document.querySelector('[data-tab="'+name+'"]').classList.add('active'); refreshActiveTab(); }
-  function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else if(currentTab==='log') loadLogs(); else loadSettings(); }
+  function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else if(currentTab==='log') loadLogs(); else if(currentTab==='kb') loadKb(); else loadSettings(); }
   function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; switchTab('workflow'); $('formTitle').textContent='Edit workflow tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('description').value=t.description||''; $('cmd').value=t.cmd||''; $('argsTemplate').value=t.argsTemplate||''; $('strictMode').checked=!!t.strictMode; window.scrollTo({top:0,behavior:'smooth'}); }
   async function deleteTool(id){ if(!confirm('Hapus tool '+id+'?')) return; const r = await fetch('/admin/api/tools/'+encodeURIComponent(id), {method:'DELETE',headers:{'cache-control':'no-cache'}}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Terhapus' : 'Gagal')); if(r.ok) loadTools(); }
   function renderList(){ const filter = (($('toolFilter') && $('toolFilter').value) || '').trim().toLowerCase(); const pageSize = Math.max(1, Number((($('toolPageSize') && $('toolPageSize').value) || 10))); const filtered = tools.filter(function(t){ const haystack = [t.id, t.toolName, (t.aliases||[]).join(' ')].join(' ').toLowerCase(); return !filter || haystack.includes(filter); }); if(!filtered.length){ $('toolList').innerHTML='<div class="muted">Tidak ada workflow yang cocok.</div>'; setToolPageInfo('0-0 / 0'); return; } const total = filtered.length; const maxPage = Math.max(1, Math.ceil(total / pageSize)); if(toolPage > maxPage) toolPage = maxPage; const startIdx = (toolPage - 1) * pageSize; const pageItems = filtered.slice(startIdx, startIdx + pageSize); $('toolList').innerHTML = pageItems.map(function(t){ return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + '</div></div><div class="actions"><button class="alt" type="button" data-edit="' + esc(t.id) + '" data-page-item="1">Edit</button><button class="danger" type="button" data-del="' + esc(t.id) + '" data-page-item="1">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div></div>'; }).join(''); const start = total ? startIdx + 1 : 0; const end = Math.min(total, startIdx + pageItems.length); setToolPageInfo('Page ' + String(toolPage) + ' · ' + String(start) + '-' + String(end) + ' / ' + String(total)); document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>editTool(el.getAttribute('data-edit'))); document.querySelectorAll('[data-del]').forEach(el=>el.onclick=()=>deleteTool(el.getAttribute('data-del'))); }
@@ -412,15 +438,19 @@ function renderAdminPage() {
   async function loadTools(){ const r = await fetch('/admin/api/tools',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); tools = j.tools || []; renderList(); }
   async function loadSettings(){ const r = await fetch('/admin/api/settings',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setSettingsStatus(j.message || 'Gagal load setting'); return; } setSettingsStatus(''); renderSettings(j); }
   async function loadRouter(){ const r = await fetch('/admin/api/router',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setRouterStatus(j.message || 'Gagal load router'); return; } $('routerJson').value = JSON.stringify(j.router || {}, null, 2); setRouterStatus(''); }
+  function renderKb(items){ if(!items || !items.length){ $('kbList').innerHTML='<div class="muted">Belum ada dokumen knowledge base.</div>'; return; } $('kbList').innerHTML = items.map(function(x){ return '<div class="item"><div><b>'+esc(x.title||'-')+'</b> <span class="muted">['+esc(x.id||'-')+']</span></div><div class="muted" style="margin-top:6px">path: '+esc(x.path||'-')+' · type: '+esc(x.type||'-')+'</div><div class="muted">tags: '+esc((x.tags||[]).join(', ')||'-')+'</div><div class="muted">'+esc(x.description||'')+'</div></div>'; }).join(''); }
+  async function loadKb(){ const r = await fetch('/admin/api/kb',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setKbStatus(j.message || 'Gagal load knowledge base'); return; } renderKb(j.docs || []); setKbStatus(''); }
   async function loadLogs(){ const date = $('logDate').value.trim(); const pageSize = Number($('logPageSize').value || 20); const qs = new URLSearchParams({ page:String(logPage), pageSize:String(pageSize) }); if(date) qs.set('date', date); const r = await fetch('/admin/api/logs?'+qs.toString(),{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setLogStatus(j.message || j.error || 'Gagal load log'); return; } renderLogs(j.logs || []); const total = Number(j.total || 0); const start = total ? ((Number(j.page||1)-1) * Number(j.pageSize||pageSize)) + 1 : 0; const end = Math.min(total, start + Number(j.pageSize||pageSize) - 1); setLogPageInfo('Page '+String(j.page||logPage)+' · '+String(start)+'-'+String(end)+' / '+String(total)); setLogStatus(''); }
   $('strictMode').addEventListener('change', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
   $('id').addEventListener('input', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
   $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const current = tools.find(x => x.id===originalId) || tools.find(x => x.id===$('id').value.trim()) || {}; const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:current.readToolName||'', aliases:splitCsv($('aliases').value), readAliases:Array.isArray(current.readAliases) ? current.readAliases : [], description:$('description').value.trim(), readDescription:current.readDescription||'', cmd:$('cmd').value.trim(), argsTemplate:$('argsTemplate').value.trim(), strictMode:$('strictMode').checked }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
+  $('kbForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { id:$('kb_id').value.trim(), title:$('kb_title').value.trim(), path:$('kb_path').value.trim(), type:$('kb_type').value, tags:splitCsv($('kb_tags').value), description:$('kb_description').value.trim() }; const r = await fetch('/admin/api/kb',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setKbStatus(j.message || (r.ok ? 'Dokumen ditambahkan' : 'Gagal tambah dokumen')); if(r.ok){ $('kbForm').reset(); loadKb(); } });
   $('settingsForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { orchestratorUrl:$('s_orchestratorUrl').value.trim(), defaultWorkflow:$('s_defaultWorkflow').value.trim(), host:$('s_host').value.trim(), port:Number($('s_port').value||0), keepaliveMs:Number($('s_keepaliveMs').value||0), reconnectMs:Number($('s_reconnectMs').value||0), xiaozhiWsUrl:$('s_xiaozhiWsUrl').value.trim() }; const r = await fetch('/admin/api/settings',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok) loadSettings(); });
   $('restartBridgeBtn').addEventListener('click', async () => { const ok = confirm('Restart bridge sekarang?'); if(!ok) return; const r = await fetch('/admin/api/restart-bridge',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:'{}'}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Restart diminta' : 'Gagal restart')); });
   $('saveRouterBtn').addEventListener('click', async () => { let payload; try { payload = JSON.parse($('routerJson').value || '{}'); } catch(e) { setRouterStatus('JSON router tidak valid'); return; } const r = await fetch('/admin/api/router',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({router: payload})}); const j = await r.json(); setRouterStatus(j.message || (r.ok ? 'Router tersimpan' : 'Gagal simpan router')); });
   $('reloadRouterBtn').addEventListener('click', async () => { await loadRouter(); setRouterStatus('Router direload'); });
   $('reloadLogsBtn').addEventListener('click', async () => { logPage = 1; await loadLogs(); setLogStatus('Log direload'); });
+  $('reloadKbBtn').addEventListener('click', async () => { await loadKb(); setKbStatus('Knowledge base direload'); });
   $('prevLogsBtn').addEventListener('click', async () => { if(logPage > 1) logPage--; await loadLogs(); });
   $('nextLogsBtn').addEventListener('click', async () => { logPage++; await loadLogs(); });
   $('logDate').addEventListener('change', async () => { logPage = 1; await loadLogs(); });
@@ -429,7 +459,7 @@ function renderAdminPage() {
   $('toolPageSize').addEventListener('change', () => { toolPage = 1; renderList(); });
   $('prevToolsBtn').addEventListener('click', () => { if(toolPage > 1) toolPage--; renderList(); });
   $('nextToolsBtn').addEventListener('click', () => { toolPage++; renderList(); });
-  renderList(); renderSettings(initialSettings); loadRouter(); loadLogs();
+  renderList(); renderSettings(initialSettings); loadRouter(); loadLogs(); loadKb();
 </script>
 </body></html>`;
 }
@@ -753,6 +783,29 @@ fastify.get('/admin/api/settings', async () => ({
   adminAuthEnabled: Boolean(ADMIN_USERNAME && ADMIN_PASSWORD),
   workflowCount: workflowConfigs.length,
 }));
+fastify.get('/admin/api/kb', async (_request, reply) => {
+  try {
+    return { docs: listKnowledgeBaseDocs() };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.post('/admin/api/kb', async (request, reply) => {
+  try {
+    const body = request.body as any;
+    await addKnowledgeBaseDoc({
+      id: String(body.id || '').trim(),
+      title: String(body.title || '').trim(),
+      path: String(body.path || '').trim(),
+      type: String(body.type || 'text').trim() === 'pdf' ? 'pdf' : 'text',
+      tags: Array.isArray(body.tags) ? body.tags.map((x: any) => String(x).trim()).filter(Boolean) : [],
+      description: String(body.description || '').trim(),
+    });
+    return { ok: true, message: 'Dokumen knowledge base berhasil ditambahkan.' };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
 fastify.get('/admin/api/logs', async (request, reply) => {
   try {
     const page = typeof (request.query as any)?.page === 'string' ? String((request.query as any).page) : '1';
