@@ -1,0 +1,6 @@
+tambah
+id: uu-adminduk-sample
+title: UU Adminduk Sample
+path: uuadminduk-sample.txt
+type: text
+tags: adminduk, sample, kependudukan

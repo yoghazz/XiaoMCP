@@ -5,6 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'node:fs';
 import path from 'node:path';
+import { runKnowledgeBaseAdmin, runKnowledgeBaseQuery } from './knowledge-base';
 
 const execAsync = promisify(exec);
 
@@ -105,15 +106,21 @@ async function executeJob(job: any) {
 
   try {
     let summary: string;
+    const workflowName = String(job.workflowName || '');
+    const router = loadWorkflowRouter();
+    const route = router[workflowName] || {};
+    const routeCmd = String(route.cmd || '').trim();
 
-    if (EXECUTION_MODE === 'openclaw') {
-      const router = loadWorkflowRouter();
-      const route = router[String(job.workflowName)] || {};
+    if (workflowName === 'knowledge-base-admin' || routeCmd === 'knowledge_base_admin') {
+      summary = await runKnowledgeBaseAdmin(text);
+    } else if (workflowName === 'knowledge-base' || routeCmd === 'knowledge_base') {
+      summary = await runKnowledgeBaseQuery(text);
+    } else if (EXECUTION_MODE === 'openclaw') {
       const cmd = route.cmd || OPENCLAW_CMD;
       const argsTemplate = route.argsTemplate || OPENCLAW_ARGS_TEMPLATE;
       const activeSessionId = getLastActiveSessionId();
       const renderedArgs = renderTemplate(argsTemplate, {
-        workflow: String(job.workflowName),
+        workflow: workflowName,
         text,
         activeSessionId,
       });

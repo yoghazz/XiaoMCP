@@ -1,0 +1,17 @@
+{
+  "updatedAt": "2026-05-17T06:11:16.451Z",
+  "docs": [
+    {
+      "id": "uu-adminduk-sample",
+      "title": "UU Adminduk Sample",
+      "path": "uuadminduk-sample.txt",
+      "type": "text",
+      "tags": [
+        "adminduk",
+        "sample",
+        "kependudukan"
+      ],
+      "description": ""
+    }
+  ]
+}

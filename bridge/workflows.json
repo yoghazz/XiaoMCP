@@ -142,5 +142,41 @@
     "cmd": "openclaw",
     "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\"",
     "strictMode": false
+  },
+  {
+    "id": "knowledge-base",
+    "toolName": "knowledge_base",
+    "readToolName": "baca_hasil_knowledge_base",
+    "description": "Cari jawaban dari dokumen knowledge base lokal yang sudah didaftarkan.",
+    "readDescription": "Baca hasil query knowledge base terakhir.",
+    "aliases": [
+      "kb_search",
+      "cari_knowledge_base",
+      "cari_dokumen"
+    ],
+    "readAliases": [
+      "baca_hasil_kb",
+      "baca_hasil_knowledge_base"
+    ],
+    "cmd": "knowledge_base",
+    "argsTemplate": "{{text}}",
+    "strictMode": false
+  },
+  {
+    "id": "knowledge-base-admin",
+    "toolName": "knowledge_base_admin",
+    "readToolName": "baca_hasil_knowledge_base_admin",
+    "description": "Kelola daftar dokumen knowledge base lokal seperti tambah atau lihat daftar dokumen.",
+    "readDescription": "Baca hasil admin knowledge base terakhir.",
+    "aliases": [
+      "kb_admin",
+      "kelola_knowledge_base"
+    ],
+    "readAliases": [
+      "baca_hasil_kb_admin"
+    ],
+    "cmd": "knowledge_base",
+    "argsTemplate": "{{text}}",
+    "strictMode": false
   }
 ]

@@ -30,5 +30,13 @@
   "cari-di-internet": {
     "cmd": "openclaw",
     "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\""
+  },
+  "knowledge-base": {
+    "cmd": "knowledge_base",
+    "argsTemplate": "{{text}}"
+  },
+  "knowledge-base-admin": {
+    "cmd": "knowledge_base",
+    "argsTemplate": "{{text}}"
   }
 }
