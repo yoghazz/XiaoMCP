@@ -56,6 +56,7 @@ type WorkflowConfig = {
   readAliases?: string[];
   cmd?: string;
   argsTemplate?: string;
+  strictMode?: boolean;
 };
 
 const WorkflowConfigSchema = z.object({
@@ -68,10 +69,11 @@ const WorkflowConfigSchema = z.object({
   readAliases: z.array(z.string()).optional(),
   cmd: z.string().optional(),
   argsTemplate: z.string().optional(),
+  strictMode: z.boolean().optional(),
 });
 
 type BridgeState = {
-  lastJobs?: Record<string, { jobId: string; createdAt: string }>;
+  lastJobs?: Record<string, { jobId: string; requestId?: string | null; createdAt: string }>;
 };
 
 let workflowConfigs: WorkflowConfig[] = [];
@@ -105,14 +107,14 @@ function saveBridgeState(patch: Partial<BridgeState>) {
   fs.writeFileSync(STATE_PATH, JSON.stringify(next, null, 2));
 }
 
-function rememberJob(workflowId: string, jobId: string) {
+function rememberJob(workflowId: string, jobId: string, requestId?: string | null) {
   const state = loadBridgeState();
-  const lastJobs = { ...(state.lastJobs || {}), [workflowId]: { jobId, createdAt: new Date().toISOString() } };
+  const lastJobs = { ...(state.lastJobs || {}), [workflowId]: { jobId, requestId: requestId || null, createdAt: new Date().toISOString() } };
   saveBridgeState({ lastJobs });
 }
 
-function getRememberedJobId(workflowId: string) {
-  return loadBridgeState().lastJobs?.[workflowId]?.jobId || null;
+function getRememberedJob(workflowId: string) {
+  return loadBridgeState().lastJobs?.[workflowId] || null;
 }
 
 function rebuildWorkflowMaps() {
@@ -140,42 +142,45 @@ function rebuildWorkflowMaps() {
 
     for (const name of readNames) {
       workflowToolMap.set(name, { kind: 'read', workflow });
-      customTools.push({
-        name,
-        description: workflow.readDescription || `Baca hasil/status terakhir workflow ${workflow.id}.`,
-        inputSchema: {
-          type: 'object',
-          properties: {},
-          additionalProperties: false,
-        },
-      });
     }
   }
 
-  if (!customTools.length) {
-    customTools = [
-      {
-        name: 'start_workflow',
-        description: 'Membuat job async ke orchestrator dan langsung mengembalikan job id.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            workflow: { type: 'string' },
-            text: { type: 'string' }
-          },
-          required: ['text']
-        }
+  customTools.push(
+    {
+      name: 'cek_status_request',
+      description: 'Cek status atau hasil request tertentu berdasarkan request_id. Gunakan tool ini saat user meminta cek status, baca hasil, atau progress request tertentu.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          request_id: { type: 'string', minLength: 1 },
+          workflow: { type: 'string' },
+        },
+        required: ['request_id'],
       },
-      {
-        name: 'get_last_result',
-        description: 'Mengambil ringkasan hasil terakhir yang selesai.',
-        inputSchema: { type: 'object', properties: {}, additionalProperties: false }
-      }
-    ];
-  }
+    },
+    {
+      name: 'baca_hasil_request',
+      description: 'Baca hasil final request tertentu berdasarkan request_id. Gunakan tool ini untuk membacakan hasil request yang spesifik agar tidak tertukar dengan request lama.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          request_id: { type: 'string', minLength: 1 },
+          workflow: { type: 'string' },
+        },
+        required: ['request_id'],
+      },
+    }
+  );
+}
+
+function buildStrictArgsTemplate(input: { id: string; textTemplate?: string }) {
+  const baseText = input.textTemplate?.trim() || '{{text}}';
+  return `agent --json --session-id {{activeSessionId}} --message "Jalankan workflow ${input.id} secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: ${baseText}"`;
 }
 
 function normalizeWorkflowConfig(input: z.infer<typeof WorkflowConfigSchema>): WorkflowConfig {
+  const strictMode = Boolean(input.strictMode);
+  const manualArgsTemplate = input.argsTemplate?.trim() || undefined;
   return {
     id: input.id.trim(),
     toolName: input.toolName.trim(),
@@ -185,7 +190,8 @@ function normalizeWorkflowConfig(input: z.infer<typeof WorkflowConfigSchema>): W
     aliases: (input.aliases || []).map((x) => x.trim()).filter(Boolean),
     readAliases: (input.readAliases || []).map((x) => x.trim()).filter(Boolean),
     cmd: input.cmd?.trim() || undefined,
-    argsTemplate: input.argsTemplate?.trim() || undefined,
+    argsTemplate: strictMode ? buildStrictArgsTemplate({ id: input.id.trim() }) : manualArgsTemplate,
+    strictMode,
   };
 }
 
@@ -295,13 +301,23 @@ function renderAdminPage() {
   <div class="tabs">
     <button class="tab-btn active" type="button" data-tab="workflow" onclick="switchTab('workflow')">Workflow</button>
     <button class="tab-btn" type="button" data-tab="router" onclick="switchTab('router')">Router</button>
+    <button class="tab-btn" type="button" data-tab="log" onclick="switchTab('log')">Log</button>
     <button class="tab-btn" type="button" data-tab="setting" onclick="switchTab('setting')">Setting</button>
   </div>
   <section id="tab-workflow" class="tab active">
     <div class="wrap" style="margin-top:20px">
       <div class="card">
         <h3>Daftar workflow tool</h3>
-        <div id="toolList"></div>
+        <div class="row" style="margin-top:12px">
+          <label>Filter nama<input id="toolFilter" placeholder="cari workflow / tool / alias" /></label>
+          <label>Page size<input id="toolPageSize" type="number" min="1" max="100" value="10" /></label>
+        </div>
+        <div class="actions" style="margin-top:12px">
+          <button type="button" class="alt" id="prevToolsBtn">Prev</button>
+          <button type="button" class="alt" id="nextToolsBtn">Next</button>
+          <span class="muted" id="toolPageInfo"></span>
+        </div>
+        <div id="toolList" style="margin-top:14px"></div>
       </div>
       <div class="card">
         <h3 id="formTitle">Buat workflow tool baru</h3>
@@ -309,16 +325,12 @@ function renderAdminPage() {
           <input type="hidden" id="originalId" />
           <label>Workflow ID<input id="id" required placeholder="kopi_instagram" /></label>
           <label>Tool name<input id="toolName" required placeholder="kopi_instagram" /></label>
-          <label>Read tool name<input id="readToolName" placeholder="baca_hasil_kopi_instagram" /></label>
-          <div class="row">
-            <label>Aliases (pisahkan koma)<input id="aliases" placeholder="buat_kopi_instagram" /></label>
-            <label>Read aliases (pisahkan koma)<input id="readAliases" placeholder="cek_kopi_instagram" /></label>
-          </div>
+          <label>Aliases (pisahkan koma)<input id="aliases" placeholder="buat_kopi_instagram" /></label>
           <label>Deskripsi run<textarea id="description"></textarea></label>
-          <label>Deskripsi read<textarea id="readDescription"></textarea></label>
           <label>Command<input id="cmd" placeholder="openclaw" /></label>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input id="strictMode" type="checkbox" style="width:auto;margin:0" /> Strict mode</label>
           <label>Args template<textarea id="argsTemplate" placeholder="agent --json --session-id {{activeSessionId}} --message &quot;{{text}}&quot;"></textarea></label>
-          <div class="muted" style="margin-top:6px">Variabel tersedia: <code>{{text}}</code>, <code>{{activeSessionId}}</code></div>
+          <div class="muted" style="margin-top:6px">Variabel tersedia: <code>{{text}}</code>, <code>{{activeSessionId}}</code>. Jika Strict mode dicentang, args template akan dibuat otomatis versi strict.</div>
           <div class="actions"><button type="submit">Simpan</button><button type="button" class="alt" onclick="resetForm()">Reset</button></div>
         </form>
         <p class="muted" id="status"></p>
@@ -334,6 +346,22 @@ function renderAdminPage() {
       <p class="muted" id="routerStatus"></p>
     </div>
   </section>
+  <section id="tab-log" class="tab">
+    <div class="card" style="margin-top:20px">
+      <div class="top"><div><h3 style="margin:0">Log Request</h3><div class="muted">Log lokal dari orchestrator. Aman dibaca tanpa query PostgreSQL.</div></div><button class="alt" type="button" id="reloadLogsBtn">Reload Log</button></div>
+      <div class="row" style="margin-top:12px">
+        <label>Filter tanggal<input id="logDate" type="date" /></label>
+        <label>Page size<input id="logPageSize" type="number" min="1" max="200" value="20" /></label>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button type="button" class="alt" id="prevLogsBtn">Prev</button>
+        <button type="button" class="alt" id="nextLogsBtn">Next</button>
+        <span class="muted" id="logPageInfo"></span>
+      </div>
+      <div id="logList" style="margin-top:14px"></div>
+      <p class="muted" id="logStatus"></p>
+    </div>
+  </section>
   <section id="tab-setting" class="tab">
     <div class="card" style="margin-top:20px">
       <h3>Setting bridge</h3>
@@ -341,7 +369,7 @@ function renderAdminPage() {
       <form id="settingsForm" style="margin-top:18px">
         <div class="row">
           <label>Orchestrator URL<input id="s_orchestratorUrl" /></label>
-          <label>Default workflow<input id="s_defaultWorkflow" /></label>
+          <label>Fallback workflow<input id="s_defaultWorkflow" /></label>
         </div>
         <div class="row">
           <label>Host<input id="s_host" /></label>
@@ -362,27 +390,46 @@ function renderAdminPage() {
   const splitCsv = (v) => v.split(',').map(x => x.trim()).filter(Boolean);
   let tools = ${initialTools};
   let currentTab = 'workflow';
+  let logPage = 1;
+  let toolPage = 1;
   const initialSettings = ${initialSettings};
   function esc(s){return String(s||'').replace(/[&<>"']/g,function(c){ if(c==='&') return '&amp;'; if(c==='<') return '&lt;'; if(c==='>') return '&gt;'; if(c==='\"') return '&quot;'; return '&#39;'; })}
   function setStatus(msg){$('status').textContent = msg || ''}
   function setSettingsStatus(msg){$('settingsStatus').textContent = msg || ''}
   function setRouterStatus(msg){$('routerStatus').textContent = msg || ''}
-  function resetForm(){ $('formTitle').textContent='Buat workflow tool baru'; $('originalId').value=''; $('toolForm').reset(); setStatus(''); }
+  function setLogStatus(msg){$('logStatus').textContent = msg || ''}
+  function setLogPageInfo(text){ $('logPageInfo').textContent = text || ''; }
+  function setToolPageInfo(text){ const el = $('toolPageInfo'); if (el) el.textContent = text || ''; }
+  function buildStrictArgsTemplateForUi(id){ return 'agent --json --session-id {{activeSessionId}} --message "Jalankan workflow '+id+' secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}"'; }
+  function resetForm(){ $('formTitle').textContent='Buat workflow tool baru'; $('originalId').value=''; $('toolForm').reset(); $('strictMode').checked=false; setStatus(''); }
   function switchTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active')); $('tab-'+name).classList.add('active'); document.querySelector('[data-tab="'+name+'"]').classList.add('active'); refreshActiveTab(); }
-  function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else loadSettings(); }
-  function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; switchTab('workflow'); $('formTitle').textContent='Edit workflow tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('readToolName').value=t.readToolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('readAliases').value=(t.readAliases||[]).join(', '); $('description').value=t.description||''; $('readDescription').value=t.readDescription||''; $('cmd').value=t.cmd||''; $('argsTemplate').value=t.argsTemplate||''; window.scrollTo({top:0,behavior:'smooth'}); }
+  function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else if(currentTab==='log') loadLogs(); else loadSettings(); }
+  function editTool(id){ const t = tools.find(x => x.id===id); if(!t) return; switchTab('workflow'); $('formTitle').textContent='Edit workflow tool'; $('originalId').value=t.id; $('id').value=t.id; $('toolName').value=t.toolName||''; $('aliases').value=(t.aliases||[]).join(', '); $('description').value=t.description||''; $('cmd').value=t.cmd||''; $('argsTemplate').value=t.argsTemplate||''; $('strictMode').checked=!!t.strictMode; window.scrollTo({top:0,behavior:'smooth'}); }
   async function deleteTool(id){ if(!confirm('Hapus tool '+id+'?')) return; const r = await fetch('/admin/api/tools/'+encodeURIComponent(id), {method:'DELETE',headers:{'cache-control':'no-cache'}}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Terhapus' : 'Gagal')); if(r.ok) loadTools(); }
-  function renderList(){ if(!tools.length){ $('toolList').innerHTML='<div class="muted">Belum ada workflow tool.</div>'; return; } $('toolList').innerHTML = tools.map(function(t){ var readPart = t.readToolName ? ' · read: ' + esc(t.readToolName) : ''; return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + readPart + '</div></div><div class="actions"><button class="alt" type="button" data-edit="' + esc(t.id) + '">Edit</button><button class="danger" type="button" data-del="' + esc(t.id) + '">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div><div class="muted">read aliases: ' + esc((t.readAliases||[]).join(', ')||'-') + '</div></div>'; }).join(''); document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>editTool(el.getAttribute('data-edit'))); document.querySelectorAll('[data-del]').forEach(el=>el.onclick=()=>deleteTool(el.getAttribute('data-del'))); }
-  function renderSettings(data){ const rows = [['Orchestrator URL', data.orchestratorUrl],['Default workflow', data.defaultWorkflow],['Workflows config path', data.workflowsConfigPath],['Bridge state path', data.bridgeStatePath],['Host', data.host],['Port', data.port],['Keepalive ms', data.keepaliveMs],['Reconnect ms', data.reconnectMs],['WebSocket Xiaozhi', data.xiaozhiWsUrl || '-'],['WebSocket active', data.websocketActive ? 'yes' : 'no'],['Admin auth', data.adminAuthEnabled ? 'enabled' : 'disabled'],['Workflow count', String(data.workflowCount ?? 0)]]; $('settingsBox').innerHTML = rows.map(function(r){ return '<div class="kv"><div class="muted">'+esc(r[0])+'</div><div class="mono">'+esc(String(r[1]))+'</div></div>'; }).join(''); $('s_orchestratorUrl').value=data.orchestratorUrl||''; $('s_defaultWorkflow').value=data.defaultWorkflow||''; $('s_host').value=data.host||''; $('s_port').value=data.port||''; $('s_keepaliveMs').value=data.keepaliveMs||''; $('s_reconnectMs').value=data.reconnectMs||''; $('s_xiaozhiWsUrl').value=data.xiaozhiWsUrl||''; }
+  function renderList(){ const filter = (($('toolFilter') && $('toolFilter').value) || '').trim().toLowerCase(); const pageSize = Math.max(1, Number((($('toolPageSize') && $('toolPageSize').value) || 10))); const filtered = tools.filter(function(t){ const haystack = [t.id, t.toolName, (t.aliases||[]).join(' ')].join(' ').toLowerCase(); return !filter || haystack.includes(filter); }); if(!filtered.length){ $('toolList').innerHTML='<div class="muted">Tidak ada workflow yang cocok.</div>'; setToolPageInfo('0-0 / 0'); return; } const total = filtered.length; const maxPage = Math.max(1, Math.ceil(total / pageSize)); if(toolPage > maxPage) toolPage = maxPage; const startIdx = (toolPage - 1) * pageSize; const pageItems = filtered.slice(startIdx, startIdx + pageSize); $('toolList').innerHTML = pageItems.map(function(t){ return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>' + esc(t.id) + '</b><div class="muted">run: ' + esc(t.toolName) + '</div></div><div class="actions"><button class="alt" type="button" data-edit="' + esc(t.id) + '" data-page-item="1">Edit</button><button class="danger" type="button" data-del="' + esc(t.id) + '" data-page-item="1">Hapus</button></div></div><div class="muted" style="margin-top:8px">aliases: ' + esc((t.aliases||[]).join(', ')||'-') + '</div></div>'; }).join(''); const start = total ? startIdx + 1 : 0; const end = Math.min(total, startIdx + pageItems.length); setToolPageInfo('Page ' + String(toolPage) + ' · ' + String(start) + '-' + String(end) + ' / ' + String(total)); document.querySelectorAll('[data-edit]').forEach(el=>el.onclick=()=>editTool(el.getAttribute('data-edit'))); document.querySelectorAll('[data-del]').forEach(el=>el.onclick=()=>deleteTool(el.getAttribute('data-del'))); }
+  function renderSettings(data){ const rows = [['Orchestrator URL', data.orchestratorUrl],['Fallback workflow', data.defaultWorkflow],['Workflows config path', data.workflowsConfigPath],['Bridge state path', data.bridgeStatePath],['Host', data.host],['Port', data.port],['Keepalive ms', data.keepaliveMs],['Reconnect ms', data.reconnectMs],['WebSocket Xiaozhi', data.xiaozhiWsUrl || '-'],['WebSocket active', data.websocketActive ? 'yes' : 'no'],['Admin auth', data.adminAuthEnabled ? 'enabled' : 'disabled'],['Workflow count', String(data.workflowCount ?? 0)]]; $('settingsBox').innerHTML = rows.map(function(r){ return '<div class="kv"><div class="muted">'+esc(r[0])+'</div><div class="mono">'+esc(String(r[1]))+'</div></div>'; }).join(''); $('s_orchestratorUrl').value=data.orchestratorUrl||''; $('s_defaultWorkflow').value=data.defaultWorkflow||''; $('s_host').value=data.host||''; $('s_port').value=data.port||''; $('s_keepaliveMs').value=data.keepaliveMs||''; $('s_reconnectMs').value=data.reconnectMs||''; $('s_xiaozhiWsUrl').value=data.xiaozhiWsUrl||''; }
+  function renderLogs(items){ if(!items || !items.length){ $('logList').innerHTML='<div class="muted">Belum ada log.</div>'; return; } $('logList').innerHTML = items.map(function(x){ var result=''; try { result = x.result_data && typeof x.result_data==='object' ? (x.result_data.text || JSON.stringify(x.result_data)) : String(x.result_data||''); } catch(e) { result = String(x.result_data||''); } return '<div class="item"><div style="display:grid;gap:6px"><div><b>'+esc(x.workflow_name||'-')+'</b> <span class="muted">'+esc(x.type||'-')+'</span></div><div class="mono">request_id: '+esc(x.request_id||'-')+'</div><div class="mono">job_id: '+esc(x.job_id||'-')+'</div><div class="mono">status: '+esc(x.status||'-')+'</div><div class="mono">time: '+esc(x.ts||'-')+'</div><div class="mono">input: '+esc(JSON.stringify(x.input_params||{}))+'</div><div class="mono">result: '+esc(result || '-').slice(0, 800)+'</div></div></div>'; }).join(''); }
   async function loadTools(){ const r = await fetch('/admin/api/tools',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); tools = j.tools || []; renderList(); }
   async function loadSettings(){ const r = await fetch('/admin/api/settings',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setSettingsStatus(j.message || 'Gagal load setting'); return; } setSettingsStatus(''); renderSettings(j); }
   async function loadRouter(){ const r = await fetch('/admin/api/router',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setRouterStatus(j.message || 'Gagal load router'); return; } $('routerJson').value = JSON.stringify(j.router || {}, null, 2); setRouterStatus(''); }
-  $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:$('readToolName').value.trim(), aliases:splitCsv($('aliases').value), readAliases:splitCsv($('readAliases').value), description:$('description').value.trim(), readDescription:$('readDescription').value.trim(), cmd:$('cmd').value.trim(), argsTemplate:$('argsTemplate').value.trim() }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
+  async function loadLogs(){ const date = $('logDate').value.trim(); const pageSize = Number($('logPageSize').value || 20); const qs = new URLSearchParams({ page:String(logPage), pageSize:String(pageSize) }); if(date) qs.set('date', date); const r = await fetch('/admin/api/logs?'+qs.toString(),{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setLogStatus(j.message || j.error || 'Gagal load log'); return; } renderLogs(j.logs || []); const total = Number(j.total || 0); const start = total ? ((Number(j.page||1)-1) * Number(j.pageSize||pageSize)) + 1 : 0; const end = Math.min(total, start + Number(j.pageSize||pageSize) - 1); setLogPageInfo('Page '+String(j.page||logPage)+' · '+String(start)+'-'+String(end)+' / '+String(total)); setLogStatus(''); }
+  $('strictMode').addEventListener('change', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
+  $('id').addEventListener('input', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
+  $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const current = tools.find(x => x.id===originalId) || tools.find(x => x.id===$('id').value.trim()) || {}; const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:current.readToolName||'', aliases:splitCsv($('aliases').value), readAliases:Array.isArray(current.readAliases) ? current.readAliases : [], description:$('description').value.trim(), readDescription:current.readDescription||'', cmd:$('cmd').value.trim(), argsTemplate:$('argsTemplate').value.trim(), strictMode:$('strictMode').checked }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
   $('settingsForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { orchestratorUrl:$('s_orchestratorUrl').value.trim(), defaultWorkflow:$('s_defaultWorkflow').value.trim(), host:$('s_host').value.trim(), port:Number($('s_port').value||0), keepaliveMs:Number($('s_keepaliveMs').value||0), reconnectMs:Number($('s_reconnectMs').value||0), xiaozhiWsUrl:$('s_xiaozhiWsUrl').value.trim() }; const r = await fetch('/admin/api/settings',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok) loadSettings(); });
   $('restartBridgeBtn').addEventListener('click', async () => { const ok = confirm('Restart bridge sekarang?'); if(!ok) return; const r = await fetch('/admin/api/restart-bridge',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:'{}'}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Restart diminta' : 'Gagal restart')); });
   $('saveRouterBtn').addEventListener('click', async () => { let payload; try { payload = JSON.parse($('routerJson').value || '{}'); } catch(e) { setRouterStatus('JSON router tidak valid'); return; } const r = await fetch('/admin/api/router',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({router: payload})}); const j = await r.json(); setRouterStatus(j.message || (r.ok ? 'Router tersimpan' : 'Gagal simpan router')); });
   $('reloadRouterBtn').addEventListener('click', async () => { await loadRouter(); setRouterStatus('Router direload'); });
-  renderList(); renderSettings(initialSettings); loadRouter();
+  $('reloadLogsBtn').addEventListener('click', async () => { logPage = 1; await loadLogs(); setLogStatus('Log direload'); });
+  $('prevLogsBtn').addEventListener('click', async () => { if(logPage > 1) logPage--; await loadLogs(); });
+  $('nextLogsBtn').addEventListener('click', async () => { logPage++; await loadLogs(); });
+  $('logDate').addEventListener('change', async () => { logPage = 1; await loadLogs(); });
+  $('logPageSize').addEventListener('change', async () => { logPage = 1; await loadLogs(); });
+  $('toolFilter').addEventListener('input', () => { toolPage = 1; renderList(); });
+  $('toolPageSize').addEventListener('change', () => { toolPage = 1; renderList(); });
+  $('prevToolsBtn').addEventListener('click', () => { if(toolPage > 1) toolPage--; renderList(); });
+  $('nextToolsBtn').addEventListener('click', () => { toolPage++; renderList(); });
+  renderList(); renderSettings(initialSettings); loadRouter(); loadLogs();
 </script>
 </body></html>`;
 }
@@ -417,11 +464,13 @@ function scheduleReconnect(reason: string) {
   }, RECONNECT_MS);
 }
 
-async function createJob(workflowName: string, text: string, userId?: string, correlationId?: string) {
+async function createJob(workflowName: string, text: string, userId?: string, correlationId?: string, requestId?: string) {
+  const finalRequestId = requestId || correlationId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const response = await client.post('/v1/jobs', {
     workflowName,
-    inputParams: { original_text: text },
+    inputParams: { original_text: text, request_id: finalRequestId },
     correlationId: correlationId || `xiaozhi_${Date.now()}`,
+    requestId: finalRequestId,
     source: 'xiaozhi',
     userId,
   });
@@ -430,11 +479,14 @@ async function createJob(workflowName: string, text: string, userId?: string, co
     throw new Error(typeof response.data === 'string' ? response.data : JSON.stringify(response.data));
   }
 
-  return response.data as { job_id: string; status: string; deduplicated?: boolean };
+  return response.data as { job_id: string; status: string; deduplicated?: boolean; request_id?: string };
 }
 
-async function getLatestResult(workflowName?: string) {
-  const query = workflowName ? `?workflowName=${encodeURIComponent(workflowName)}` : '';
+async function getLatestResult(workflowName?: string, requestId?: string) {
+  const params = new URLSearchParams();
+  if (workflowName) params.set('workflowName', workflowName);
+  if (requestId) params.set('requestId', requestId);
+  const query = params.toString() ? `?${params.toString()}` : '';
   const response = await client.get(`/v1/jobs/latest${query}`);
   if (response.status >= 400) {
     throw new Error(typeof response.data === 'string' ? response.data : JSON.stringify(response.data));
@@ -476,8 +528,8 @@ async function handleToolCall(msg: any) {
     }
 
     const result = await createJob(workflow.id, rawText);
-    rememberJob(workflow.id, result.job_id);
-    const resultText = `Workflow ${workflow.id} diproses. Ref: ${String(result.job_id).slice(0, 8)}. Kalau mau cek lagi, minta ${workflow.readToolName || 'get_last_result'}.`;
+    rememberJob(workflow.id, result.job_id, result.request_id || null);
+    const resultText = `Workflow ${workflow.id} diproses. Ref: ${String(result.job_id).slice(0, 8)}. Request ID: ${result.request_id || '-'}. Kalau mau cek lagi, minta ${workflow.readToolName || 'get_last_result'}.`;
     send({
       jsonrpc: '2.0',
       id: msg.id,
@@ -500,13 +552,21 @@ async function handleToolCall(msg: any) {
     let job: any = null;
 
     try {
-      const latest = await getLatestResult(workflow.id);
-      job = await getJob(latest.id);
+      const remembered = getRememberedJob(workflow.id);
+      if (remembered?.requestId) {
+        const latest = await getLatestResult(workflow.id, remembered.requestId);
+        job = await getJob(latest.id);
+      } else if (remembered?.jobId) {
+        job = await getJob(remembered.jobId);
+      } else {
+        const latest = await getLatestResult(workflow.id);
+        job = await getJob(latest.id);
+      }
     } catch {
-      const rememberedJobId = getRememberedJobId(workflow.id);
-      if (rememberedJobId) {
+      const remembered = getRememberedJob(workflow.id);
+      if (remembered?.jobId) {
         try {
-          job = await getJob(rememberedJobId);
+          job = await getJob(remembered.jobId);
         } catch {
           job = null;
         }
@@ -541,8 +601,8 @@ async function handleToolCall(msg: any) {
       return;
     }
     const result = await createJob(workflowName, rawText);
-    rememberJob(workflowName, result.job_id);
-    const text = `Tugas telah diterima. Ref: ${String(result.job_id).slice(0, 8)}. Hasil final paling aman dikirim ke Telegram.`;
+    rememberJob(workflowName, result.job_id, result.request_id || null);
+    const text = `Tugas telah diterima. Ref: ${String(result.job_id).slice(0, 8)}. Request ID: ${result.request_id || '-'}. Hasil final paling aman dikirim ke Telegram.`;
     send({
       jsonrpc: '2.0',
       id: msg.id,
@@ -563,6 +623,27 @@ async function handleToolCall(msg: any) {
       result: {
         content: [{ type: 'text', text }],
         structuredContent: { ok: true, jobId: latest.id, text },
+      },
+    });
+    return;
+  }
+
+  if (name === 'cek_status_request' || name === 'baca_hasil_request') {
+    const requestId = String(msg.params?.arguments?.request_id ?? '').trim();
+    const workflowName = String(msg.params?.arguments?.workflow ?? '').trim() || undefined;
+    if (!requestId) {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'request_id required' } });
+      return;
+    }
+    const latest = await getLatestResult(workflowName, requestId);
+    const job = await getJob(latest.id);
+    const text = buildReadText({ id: latest.workflowName, readToolName: '', toolName: '' }, job);
+    send({
+      jsonrpc: '2.0',
+      id: msg.id,
+      result: {
+        content: [{ type: 'text', text }],
+        structuredContent: { ok: true, request_id: requestId, workflow: latest.workflowName, jobId: latest.id, text },
       },
     });
     return;
@@ -672,6 +753,22 @@ fastify.get('/admin/api/settings', async () => ({
   adminAuthEnabled: Boolean(ADMIN_USERNAME && ADMIN_PASSWORD),
   workflowCount: workflowConfigs.length,
 }));
+fastify.get('/admin/api/logs', async (request, reply) => {
+  try {
+    const page = typeof (request.query as any)?.page === 'string' ? String((request.query as any).page) : '1';
+    const pageSize = typeof (request.query as any)?.pageSize === 'string' ? String((request.query as any).pageSize) : '50';
+    const date = typeof (request.query as any)?.date === 'string' ? String((request.query as any).date) : '';
+    const params = new URLSearchParams({ page, pageSize });
+    if (date) params.set('date', date);
+    const response = await client.get('/v1/job-logs/recent?' + params.toString());
+    if (response.status >= 400) {
+      return reply.status(response.status).send(response.data);
+    }
+    return response.data;
+  } catch (err) {
+    return reply.status(500).send({ message: String((err as Error).message || err) });
+  }
+});
 fastify.put('/admin/api/settings', async (request, reply) => {
   try {
     const body = request.body as any;
@@ -776,13 +873,15 @@ fastify.post('/invoke/start_workflow', async (request, reply) => {
   try {
     const body = StartSchema.parse(request.body);
     const workflow = body.workflow || DEFAULT_WORKFLOW;
-    const result = await createJob(workflow, body.text, body.userId, body.correlationId);
-    rememberJob(workflow, result.job_id);
+    const requestId = body.correlationId || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const result = await createJob(workflow, body.text, body.userId, body.correlationId, requestId);
+    rememberJob(workflow, result.job_id, requestId);
 
     return {
       status: 'success',
       message: 'Tugas telah diterima. Hasil final paling aman dikirim ke Telegram.',
       workflow,
+      request_id: requestId,
       job_id: result.job_id,
       job_status: result.status,
       deduplicated: result.deduplicated,
@@ -796,10 +895,12 @@ fastify.post('/invoke/start_workflow', async (request, reply) => {
 fastify.get('/invoke/get_last_result', async (request, reply) => {
   try {
     const workflowName = typeof (request.query as any)?.workflowName === 'string' ? (request.query as any).workflowName : undefined;
-    const latest = await getLatestResult(workflowName);
+    const requestId = typeof (request.query as any)?.requestId === 'string' ? (request.query as any).requestId : undefined;
+    const latest = await getLatestResult(workflowName, requestId);
     return {
       status: 'success',
       message: `Tugas ${latest.workflowName} sudah selesai. Hasilnya: ${latest.summary}`,
+      request_id: latest.requestId || null,
       job_id: latest.id,
     };
   } catch (_error) {

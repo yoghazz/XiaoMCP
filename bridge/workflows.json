@@ -14,7 +14,8 @@
       "baca_hasil_prr"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow prr secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}\"",
+    "strictMode": true
   },
   {
     "id": "setiti",
@@ -31,7 +32,8 @@
       "baca_jumlah_setiti"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Setiti Count secara strict lewat jalur n8n yang sudah ada. Jangan menebak atau pakai konteks lama. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "donita-stok-total",
@@ -47,22 +49,29 @@
       "baca_hasil_stok_blangko_total"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode stok-total secara strict lewat jalur n8n. Jangan tafsir bebas. Ambil angka hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "donita-stok-wilayah",
     "toolName": "workflow_donita_stok_wilayah",
     "readToolName": "hasil_donita_stok_wilayah_terakhir",
-    "description": "Workflow Donita stok blangko per wilayah.",
-    "readDescription": "Baca hasil stok blangko wilayah Donita terakhir.",
+    "description": "Cek stok blangko Donita untuk 1 wilayah, kecamatan, atau kode wilayah tertentu. Gunakan tool ini saat user meminta stok blangko per kecamatan/per wilayah/berdasarkan kode wilayah. Hasil harus hanya untuk wilayah yang diminta.",
+    "readDescription": "Baca hasil terbaru cek stok blangko wilayah Donita untuk request yang sedang berjalan atau terakhir.",
     "aliases": [
-      "stok_blangko_wilayah"
+      "stok_blangko_wilayah",
+      "cek_stok_blangko_wilayah",
+      "cek_stok_blangko_kecamatan",
+      "cek_stok_blangko_kode_wilayah",
+      "cek_stok_blangko_kode_kecamatan"
     ],
     "readAliases": [
-      "baca_hasil_stok_blangko_wilayah"
+      "baca_hasil_stok_blangko_wilayah",
+      "cek_status_stok_blangko_wilayah"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode stok-wilayah secara strict lewat jalur n8n. Gunakan hanya wilayah atau kode wilayah yang disebut user. Jika tidak ada match exact, bilang tidak ditemukan. Jangan ambil wilayah lain, jangan menebak. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "donita-pengajuan-total",
@@ -78,7 +87,8 @@
       "baca_hasil_pengajuan_donita_total"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode pengajuan-total secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "donita-pengajuan-dokumen-tanggal",
@@ -94,7 +104,8 @@
       "baca_hasil_pengajuan_dokumen_donita"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode pengajuan-per-dokumen-per-tanggal secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "donita-jumlah-loket",
@@ -110,7 +121,8 @@
       "baca_hasil_jumlah_loket_donita"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"{{text}}\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode jumlah-loket secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "strictMode": false
   },
   {
     "id": "cari-di-internet",
@@ -128,6 +140,7 @@
       "baca_cari_internet"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\""
+    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\"",
+    "strictMode": false
   }
 ]
