@@ -1,13 +1,14 @@
 import axios from 'axios';
 import pino from 'pino';
 import dotenv from 'dotenv';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { runKnowledgeBaseAdmin, runKnowledgeBaseQuery } from './knowledge-base';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 dotenv.config();
 
@@ -42,6 +43,46 @@ function shellEscape(value: string) {
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, key) => vars[key] ?? '');
+}
+
+function splitArgsPreserveQuotes(input: string) {
+  const out: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | '' = '';
+  let escape = false;
+  for (const ch of input) {
+    if (escape) {
+      cur += ch;
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) {
+        quote = '';
+      } else {
+        cur += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch as '"' | "'";
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur);
+        cur = '';
+      }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 function loadWorkflowRouter(): Record<string, { cmd?: string; argsTemplate?: string }> {
@@ -124,9 +165,9 @@ async function executeJob(job: any) {
         text,
         activeSessionId,
       });
-      const command = `${cmd} ${renderedArgs}`;
-      logger.info({ workflow: job.workflowName, activeSessionId, command }, 'Resolved OpenClaw execution route');
-      const { stdout, stderr } = await execAsync(command, { maxBuffer: 5 * 1024 * 1024 });
+      const argv = splitArgsPreserveQuotes(renderedArgs);
+      logger.info({ workflow: job.workflowName, activeSessionId, cmd, argv }, 'Resolved OpenClaw execution route');
+      const { stdout, stderr } = await execFileAsync(cmd, argv, { maxBuffer: 5 * 1024 * 1024 });
       if (stderr?.trim()) {
         await updateJob(job.id, { event: { type: 'LOG', message: stderr.trim() } });
       }

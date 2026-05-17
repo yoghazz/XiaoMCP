@@ -118,12 +118,22 @@ function saveBridgeState(patch: Partial<BridgeState>) {
 
 function rememberJob(workflowId: string, jobId: string, requestId?: string | null) {
   const state = loadBridgeState();
-  const lastJobs = { ...(state.lastJobs || {}), [workflowId]: { jobId, requestId: requestId || null, createdAt: new Date().toISOString() } };
+  const key = normalizeWorkflowId(workflowId);
+  const lastJobs = { ...(state.lastJobs || {}), [key]: { jobId, requestId: requestId || null, createdAt: new Date().toISOString() } };
   saveBridgeState({ lastJobs });
 }
 
+function normalizeWorkflowId(input?: string) {
+  return String(input || '')
+    .trim()
+    .replace(/^workflow[_-]/i, '')
+    .replace(/^hasil[_-]/i, '')
+    .replace(/^baca[_-]hasil[_-]/i, '')
+    .replace(/_/g, '-');
+}
+
 function getRememberedJob(workflowId: string) {
-  return loadBridgeState().lastJobs?.[workflowId] || null;
+  return loadBridgeState().lastJobs?.[normalizeWorkflowId(workflowId)] || null;
 }
 
 function rebuildWorkflowMaps() {
@@ -184,7 +194,7 @@ function rebuildWorkflowMaps() {
 
 function buildStrictArgsTemplate(input: { id: string; textTemplate?: string }) {
   const baseText = input.textTemplate?.trim() || '{{text}}';
-  return `agent --json --session-id {{activeSessionId}} --message "Jalankan workflow ${input.id} secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: ${baseText}"`;
+  return `agent --json --session-id xiaozhi-openclaw --message "Jalankan workflow ${input.id} secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: ${baseText}"`;
 }
 
 function normalizeWorkflowConfig(input: z.infer<typeof WorkflowConfigSchema>): WorkflowConfig {
@@ -339,8 +349,8 @@ function renderAdminPage() {
           <label>Deskripsi run<textarea id="description"></textarea></label>
           <label>Command<input id="cmd" placeholder="openclaw" /></label>
           <label style="display:flex;align-items:center;gap:8px;margin-top:10px"><input id="strictMode" type="checkbox" style="width:auto;margin:0" /> Strict mode</label>
-          <label>Args template<textarea id="argsTemplate" placeholder="agent --json --session-id {{activeSessionId}} --message &quot;{{text}}&quot;"></textarea></label>
-          <div class="muted" style="margin-top:6px">Variabel tersedia: <code>{{text}}</code>, <code>{{activeSessionId}}</code>. Jika Strict mode dicentang, args template akan dibuat otomatis versi strict.</div>
+          <label>Args template<textarea id="argsTemplate" placeholder="agent --json --session-id xiaozhi-openclaw --message &quot;{{text}}&quot;"></textarea></label>
+          <div class="muted" style="margin-top:6px">Variabel tersedia: <code>{{text}}</code>, <code>xiaozhi-openclaw</code>. Jika Strict mode dicentang, args template akan dibuat otomatis versi strict.</div>
           <div class="actions"><button type="submit">Simpan</button><button type="button" class="alt" onclick="resetForm()">Reset</button></div>
         </form>
         <p class="muted" id="status"></p>
@@ -442,7 +452,7 @@ function renderAdminPage() {
   function resetKbUploadProgress(){ const bar = $('kbUploadProgress'); const label = $('kbUploadProgressText'); if(bar){ bar.value = 0; bar.style.display = 'none'; } if(label) label.textContent = ''; }
   function setLogPageInfo(text){ $('logPageInfo').textContent = text || ''; }
   function setToolPageInfo(text){ const el = $('toolPageInfo'); if (el) el.textContent = text || ''; }
-  function buildStrictArgsTemplateForUi(id){ return 'agent --json --session-id {{activeSessionId}} --message "Jalankan workflow '+id+' secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}"'; }
+  function buildStrictArgsTemplateForUi(id){ return 'agent --json --session-id xiaozhi-openclaw --message "Jalankan workflow '+id+' secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}"'; }
   function resetForm(){ $('formTitle').textContent='Buat workflow tool baru'; $('originalId').value=''; $('toolForm').reset(); $('strictMode').checked=false; setStatus(''); }
   function switchTab(name){ currentTab=name; document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active')); $('tab-'+name).classList.add('active'); document.querySelector('[data-tab="'+name+'"]').classList.add('active'); refreshActiveTab(); }
   function refreshActiveTab(){ if(currentTab==='workflow') loadTools(); else if(currentTab==='router') loadRouter(); else if(currentTab==='log') loadLogs(); else if(currentTab==='kb') loadKb(); else loadSettings(); }
@@ -552,18 +562,85 @@ async function getJob(jobId: string) {
   return response.data;
 }
 
+function tryFormatSimpleJsonResult(text: string) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{')) return '';
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object' && !obj.result) {
+      const wilayah = String(obj.Wilayah || obj.wilayah || '').trim();
+      const stok = obj.stok;
+      const kode = String(obj.wilayah_kode || obj.kode_wilayah || '').trim();
+      const totalLoket = obj.total_loket;
+      if (wilayah && typeof stok !== 'undefined') {
+        return `Stok blangko Kecamatan ${wilayah} ${stok} lembar. Kode wilayah ${kode}.`;
+      }
+      if (typeof totalLoket !== 'undefined') {
+        return `Jumlah loket ${totalLoket}.`;
+      }
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+function tryExtractOpenClawText(text: string) {
+  const raw = String(text || '').trim();
+  if (!raw.startsWith('{')) return '';
+  try {
+    const obj = JSON.parse(raw);
+    const payloadTexts = Array.isArray(obj?.result?.payloads)
+      ? obj.result.payloads.map((p: any) => String(p?.text || '').trim()).filter(Boolean)
+      : [];
+    const visible = String(obj?.result?.meta?.finalAssistantVisibleText || '').trim();
+    const rawAssistant = String(obj?.result?.meta?.finalAssistantRawText || '').trim();
+    return payloadTexts.join('\n\n') || visible || rawAssistant || '';
+  } catch {
+    return '';
+  }
+}
+
+function sanitizeForXiaozhi(text: string) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/[`*_#~>|\\]/g, ' ')
+    .replace(/\{\s*"payloads"[\s\S]*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function buildReadText(workflow: WorkflowConfig, job: any) {
   if (!job) {
     return `Belum ada hasil tersimpan untuk workflow ${workflow.id}.`;
   }
   if (job.status === 'COMPLETED') {
-    return String(job.resultData?.summary || `Workflow ${workflow.id} sudah selesai.`);
+    const rawText = String(job.resultData?.text || '').trim();
+    const rawSummary = String(job.resultData?.summary || '').trim();
+    const simpleJson = tryFormatSimpleJsonResult(rawText) || tryFormatSimpleJsonResult(rawSummary);
+    const extracted = tryExtractOpenClawText(rawText) || tryExtractOpenClawText(rawSummary);
+    let out = simpleJson || extracted || rawText || rawSummary || `Workflow ${workflow.id} sudah selesai.`;
+
+    if (workflow.id === 'knowledge-base' || job.workflowName === 'knowledge-base') {
+      out = out
+        .replace(/^Hasil pencarian knowledge base untuk:\s*/i, '')
+        .replace(/^HASIL KNOWLEDGE BASE:\s*/i, '')
+        .replace(/Kutipan\s+(\d+)\s*:/gi, 'Kutipan $1: ')
+        .trim();
+      out = sanitizeForXiaozhi(out);
+      if (out.length > 1800) out = out.slice(0, 1800) + ' [hasil dipotong]';
+      return out;
+    }
+
+    out = sanitizeForXiaozhi(out);
+    if (out.length > 1800) out = out.slice(0, 1800) + ' [hasil dipotong]';
+    return out;
   }
   if (job.status === 'FAILED' || job.status === 'TIMEOUT') {
     const lastError = job.events?.find((e: any) => e.eventType === 'ERROR')?.message;
-    return `Workflow ${workflow.id} status ${job.status}. ${lastError || ''}`.trim();
+    return sanitizeForXiaozhi(`Workflow ${workflow.id} status ${job.status}. ${lastError || ''}`.trim());
   }
-  return `Workflow ${workflow.id} masih ${String(job.status).toLowerCase()}. Ref: ${job.id}.`;
+  return sanitizeForXiaozhi(`Workflow ${workflow.id} masih ${String(job.status).toLowerCase()}. Ref: ${job.id}.`);
 }
 
 async function handleToolCall(msg: any) {
@@ -579,7 +656,9 @@ async function handleToolCall(msg: any) {
 
     const result = await createJob(workflow.id, rawText);
     rememberJob(workflow.id, result.job_id, result.request_id || null);
-    const resultText = `Workflow ${workflow.id} diproses. Ref: ${String(result.job_id).slice(0, 8)}. Request ID: ${result.request_id || '-'}. Kalau mau cek lagi, minta ${workflow.readToolName || 'get_last_result'}.`;
+    const resultText = workflow.id === 'knowledge-base'
+      ? `Knowledge base sedang diproses. Request ID: ${result.request_id || '-'}. Untuk baca hasil, panggil ${workflow.readToolName || 'get_last_result'} dan bacakan hasil apa adanya.`
+      : `Workflow ${workflow.id} diproses. Ref: ${String(result.job_id).slice(0, 8)}. Request ID: ${result.request_id || '-'}. Kalau mau cek lagi, minta ${workflow.readToolName || 'get_last_result'}.`;
     send({
       jsonrpc: '2.0',
       id: msg.id,
@@ -679,12 +758,9 @@ async function handleToolCall(msg: any) {
   }
 
   if (name === 'cek_status_request' || name === 'baca_hasil_request') {
-    const requestId = String(msg.params?.arguments?.request_id ?? '').trim();
-    const workflowName = String(msg.params?.arguments?.workflow ?? '').trim() || undefined;
-    if (!requestId) {
-      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'request_id required' } });
-      return;
-    }
+    const rawRequestId = String(msg.params?.arguments?.request_id ?? '').trim();
+    const workflowName = normalizeWorkflowId(String(msg.params?.arguments?.workflow ?? '').trim()) || undefined;
+    const requestId = !rawRequestId || rawRequestId.toLowerCase() === 'last' ? undefined : rawRequestId;
     const latest = await getLatestResult(workflowName, requestId);
     const job = await getJob(latest.id);
     const text = buildReadText({ id: latest.workflowName, readToolName: '', toolName: '' }, job);
@@ -693,7 +769,7 @@ async function handleToolCall(msg: any) {
       id: msg.id,
       result: {
         content: [{ type: 'text', text }],
-        structuredContent: { ok: true, request_id: requestId, workflow: latest.workflowName, jobId: latest.id, text },
+        structuredContent: { ok: true, request_id: latest.requestId || requestId || 'last', workflow: latest.workflowName, jobId: latest.id, text },
       },
     });
     return;

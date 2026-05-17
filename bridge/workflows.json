@@ -14,7 +14,7 @@
       "baca_hasil_prr"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow prr secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow prr secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}\"",
     "strictMode": true
   },
   {
@@ -32,7 +32,7 @@
       "baca_jumlah_setiti"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Setiti Count secara strict lewat jalur n8n yang sudah ada. Jangan menebak atau pakai konteks lama. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Setiti Count secara strict lewat jalur n8n yang sudah ada. Jangan menebak atau pakai konteks lama. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -49,7 +49,7 @@
       "baca_hasil_stok_blangko_total"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode stok-total secara strict lewat jalur n8n. Jangan tafsir bebas. Ambil angka hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Donita mode stok-total secara strict lewat jalur n8n. Jangan tafsir bebas. Ambil angka hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -70,7 +70,7 @@
       "cek_status_stok_blangko_wilayah"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode stok-wilayah secara strict lewat jalur n8n. Gunakan hanya wilayah atau kode wilayah yang disebut user. Jika tidak ada match exact, bilang tidak ditemukan. Jangan ambil wilayah lain, jangan menebak. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Donita mode stok-wilayah secara strict lewat jalur n8n. Gunakan hanya wilayah atau kode wilayah yang disebut user. Jika tidak ada match exact, bilang tidak ditemukan. Jangan ambil wilayah lain, jangan menebak. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -87,7 +87,7 @@
       "baca_hasil_pengajuan_donita_total"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode pengajuan-total secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Donita mode pengajuan-total secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -104,7 +104,7 @@
       "baca_hasil_pengajuan_dokumen_donita"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode pengajuan-per-dokumen-per-tanggal secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Donita mode pengajuan-per-dokumen-per-tanggal secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -121,7 +121,7 @@
       "baca_hasil_jumlah_loket_donita"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \"Jalankan workflow Donita mode jumlah-loket secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-openclaw --message \"Jalankan workflow Donita mode jumlah-loket secara strict lewat jalur n8n. Gunakan tanggal exact dari user. Jawab hanya dari hasil workflow. Permintaan user: {{text}}\"",
     "strictMode": false
   },
   {
@@ -140,7 +140,7 @@
       "baca_cari_internet"
     ],
     "cmd": "openclaw",
-    "argsTemplate": "agent --json --session-id {{activeSessionId}} --message \\\"{{text}}\\\"",
+    "argsTemplate": "agent --json --session-id xiaozhi-internet --message \\\"{{text}}\\\"",
     "strictMode": false
   },
   {

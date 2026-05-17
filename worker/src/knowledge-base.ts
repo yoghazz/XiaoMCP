@@ -33,7 +33,15 @@ async function extractDocText(doc: KnowledgeBaseDoc) {
 }
 
 function normalize(s: string) {
-  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s:/.-]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTerms(query: string) {
+  return Array.from(new Set(normalize(query).split(/[^\p{L}\p{N}_-]+/u).filter((x) => x.length >= 2)));
 }
 
 function chunkText(text: string, chunkSize = 1200, overlap = 200) {
@@ -48,16 +56,63 @@ function chunkText(text: string, chunkSize = 1200, overlap = 200) {
   return chunks;
 }
 
+function extractFocusedExcerpt(query: string, chunk: string) {
+  const q = normalize(query);
+  const c = chunk.replace(/\r/g, ' ');
+  const lc = normalize(c);
+
+  const anchors: string[] = [];
+  if (/ayat kursi/.test(q)) anchors.push('ayat kursi', '255', 'allah, tidak ada tuhan');
+  if (/al baqarah 255|al-baqarah 255|2:255/.test(q)) anchors.push('255', 'al baqarah', 'allah, tidak ada tuhan');
+  if (/administrasi kependudukan|adminduk/.test(q)) anchors.push('administrasi kependudukan');
+
+  for (const anchor of anchors) {
+    const idx = lc.indexOf(normalize(anchor));
+    if (idx >= 0) {
+      const start = Math.max(0, idx - 180);
+      const end = Math.min(c.length, idx + 900);
+      return c.slice(start, end).trim();
+    }
+  }
+
+  return c.slice(0, 900).trim();
+}
+
 function scoreChunk(query: string, chunk: string, doc: KnowledgeBaseDoc) {
   const q = normalize(query);
   const c = normalize(chunk);
+  const title = normalize(doc.title);
+  const tags = (doc.tags || []).map(normalize);
+  const desc = normalize(doc.description || '');
+  const terms = extractTerms(query);
   let score = 0;
-  const terms = Array.from(new Set(q.split(/[^\p{L}\p{N}_-]+/u).filter((x) => x.length >= 2)));
+
+  if (!q) return score;
+
+  if (title.includes(q)) score += 80;
+  if (desc.includes(q)) score += 45;
+  if (tags.some((tag) => tag.includes(q))) score += 60;
+  if (c.includes(q)) score += 50;
+
+  const queryHasDigits = /\d/.test(q);
   for (const term of terms) {
-    if (c.includes(term)) score += 3;
-    if (normalize(doc.title).includes(term)) score += 5;
-    if ((doc.tags || []).some((tag) => normalize(tag).includes(term))) score += 4;
+    const inChunk = c.includes(term);
+    const inTitle = title.includes(term);
+    const inTag = tags.some((tag) => tag.includes(term));
+    const inDesc = desc.includes(term);
+    if (inChunk) score += queryHasDigits && /\d/.test(term) ? 8 : 4;
+    if (inTitle) score += queryHasDigits && /\d/.test(term) ? 14 : 7;
+    if (inTag) score += queryHasDigits && /\d/.test(term) ? 12 : 6;
+    if (inDesc) score += 4;
   }
+
+  const matchedTerms = terms.filter((term) => c.includes(term)).length;
+  score += matchedTerms * 2;
+
+  if (/ayat kursi/.test(q) && /ayat kursi/.test(c)) score += 120;
+  if (/al baqarah 255|al-baqarah 255|2:255/.test(q) && /255/.test(c)) score += 120;
+  if (/administrasi kependudukan|adminduk/.test(q) && /administrasi kependudukan|adminduk/.test(c)) score += 90;
+
   return score;
 }
 
@@ -117,7 +172,7 @@ export async function runKnowledgeBaseQuery(text: string) {
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const top = scored.slice(0, 5);
+  const top = scored.slice(0, 8);
   if (!top.length) {
     return 'Tidak ditemukan bagian yang relevan di knowledge base.';
   }
@@ -126,16 +181,17 @@ export async function runKnowledgeBaseQuery(text: string) {
   for (const item of top) {
     const key = item.doc.id;
     if (!grouped.has(key)) grouped.set(key, { title: item.doc.title, excerpts: [] });
-    grouped.get(key)!.excerpts.push(item.chunk.slice(0, 700).trim());
+    const bucket = grouped.get(key)!;
+    if (bucket.excerpts.length >= 2) continue;
+    bucket.excerpts.push(extractFocusedExcerpt(text, item.chunk));
   }
 
   const parts: string[] = [];
-  parts.push(`Hasil pencarian knowledge base untuk: ${text}`);
   for (const [docId, data] of grouped.entries()) {
-    parts.push(`\nDokumen: ${data.title} [${docId}]`);
-    data.excerpts.slice(0, 2).forEach((excerpt, idx) => {
+    parts.push(`Dokumen: ${data.title} [${docId}]`);
+    data.excerpts.forEach((excerpt, idx) => {
       parts.push(`Kutipan ${idx + 1}: ${excerpt}`);
     });
   }
-  return parts.join('\n');
+  return parts.join('\n\n');
 }
