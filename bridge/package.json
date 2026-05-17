@@ -2,13 +2,14 @@
   "name": "xo-bridge",
   "version": "1.0.0",
   "description": "Xiaozhi edge bridge for XiaoMCP",
-  "main": "dist/index.js",
+  "main": "dist/bridge/src/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/bridge/src/index.js"
   },
   "dependencies": {
+    "@fastify/multipart": "^8.3.1",
     "axios": "^1.6.8",
     "dotenv": "^16.4.5",
     "fastify": "^4.27.0",

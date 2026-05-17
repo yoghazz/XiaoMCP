@@ -76,3 +76,13 @@ export async function addKnowledgeBaseDoc(input: {
   saveKnowledgeBaseIndex(index);
   return { ok: true };
 }
+
+export async function removeKnowledgeBaseDoc(id: string) {
+  const index = loadKnowledgeBaseIndex();
+  const before = index.docs.length;
+  index.docs = index.docs.filter((doc) => doc.id !== id);
+  if (index.docs.length === before) throw new Error(`Dokumen KB tidak ditemukan: ${id}`);
+  index.updatedAt = new Date().toISOString();
+  saveKnowledgeBaseIndex(index);
+  return { ok: true };
+}

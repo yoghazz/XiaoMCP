@@ -7,7 +7,9 @@ import pino from 'pino';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import WebSocket from 'ws';
-import { addKnowledgeBaseDoc, listKnowledgeBaseDocs } from '../../shared/knowledge-base-index';
+import multipart from '@fastify/multipart';
+import { pipeline } from 'node:stream/promises';
+import { addKnowledgeBaseDoc, listKnowledgeBaseDocs, removeKnowledgeBaseDoc } from '../../shared/knowledge-base-index';
 
 dotenv.config();
 
@@ -39,6 +41,12 @@ const client = axios.create({
 });
 
 const fastify = Fastify({ logger });
+fastify.register(multipart, {
+  limits: {
+    fileSize: 100 * 1024 * 1024,
+    files: 1,
+  },
+});
 
 const StartSchema = z.object({
   workflow: z.string().min(1).optional(),
@@ -301,9 +309,9 @@ function renderAdminPage() {
   <div class="top"><div><h1 style="margin:0">XiaoMCP Admin</h1><div class="muted">Kelola workflow dan setting untuk Xiaozhi bridge.</div></div><button class="alt" type="button" onclick="refreshActiveTab()">Refresh</button></div>
   <div class="tabs">
     <button class="tab-btn active" type="button" data-tab="workflow" onclick="switchTab('workflow')">Workflow</button>
+    <button class="tab-btn" type="button" data-tab="kb" onclick="switchTab('kb')">Knowledge Base</button>
     <button class="tab-btn" type="button" data-tab="router" onclick="switchTab('router')">Router</button>
     <button class="tab-btn" type="button" data-tab="log" onclick="switchTab('log')">Log</button>
-    <button class="tab-btn" type="button" data-tab="kb" onclick="switchTab('kb')">Knowledge Base</button>
     <button class="tab-btn" type="button" data-tab="setting" onclick="switchTab('setting')">Setting</button>
   </div>
   <section id="tab-workflow" class="tab active">
@@ -368,21 +376,27 @@ function renderAdminPage() {
     <div class="wrap" style="margin-top:20px">
       <div class="card">
         <div class="top"><div><h3 style="margin:0">Daftar dokumen knowledge base</h3><div class="muted">Referensi lokal untuk workflow knowledge-base.</div></div><button class="alt" type="button" id="reloadKbBtn">Reload KB</button></div>
+        <label style="margin-top:12px">Filter dokumen<input id="kbFilter" placeholder="cari judul / id / tag" /></label>
         <div id="kbList" style="margin-top:14px"></div>
         <p class="muted" id="kbStatus"></p>
       </div>
       <div class="card">
-        <h3>Tambah dokumen knowledge base</h3>
+        <h3>Upload dokumen knowledge base</h3>
         <form id="kbForm">
           <label>ID dokumen<input id="kb_id" required placeholder="uu-adminduk-2014" /></label>
           <label>Judul<input id="kb_title" required placeholder="Peraturan Adminduk 2014" /></label>
           <div class="row">
-            <label>Path file<input id="kb_path" required placeholder="uuadminduk2014.pdf" /></label>
+            <label>File dokumen<input id="kb_file" type="file" required /></label>
             <label>Tipe<select id="kb_type"><option value="pdf">pdf</option><option value="text">text</option></select></label>
           </div>
+          <label>Path file (opsional, auto dari upload)<input id="kb_path" placeholder="uuadminduk2014.pdf" /></label>
           <label>Tags (pisahkan koma)<input id="kb_tags" placeholder="adminduk, uu, 2014" /></label>
           <label>Deskripsi<textarea id="kb_description"></textarea></label>
-          <div class="actions"><button type="submit">Tambah Dokumen</button></div>
+          <div style="margin-top:10px">
+            <progress id="kbUploadProgress" value="0" max="100" style="width:100%;display:none"></progress>
+            <div class="muted" id="kbUploadProgressText" style="margin-top:6px"></div>
+          </div>
+          <div class="actions"><button type="submit">Upload & Tambah Dokumen</button></div>
         </form>
       </div>
     </div>
@@ -424,6 +438,8 @@ function renderAdminPage() {
   function setRouterStatus(msg){$('routerStatus').textContent = msg || ''}
   function setLogStatus(msg){$('logStatus').textContent = msg || ''}
   function setKbStatus(msg){ const el = $('kbStatus'); if (el) el.textContent = msg || ''; }
+  function setKbUploadProgress(value, text){ const bar = $('kbUploadProgress'); const label = $('kbUploadProgressText'); if(bar){ bar.style.display = 'block'; bar.value = Math.max(0, Math.min(100, Number(value || 0))); } if(label) label.textContent = text || ''; }
+  function resetKbUploadProgress(){ const bar = $('kbUploadProgress'); const label = $('kbUploadProgressText'); if(bar){ bar.value = 0; bar.style.display = 'none'; } if(label) label.textContent = ''; }
   function setLogPageInfo(text){ $('logPageInfo').textContent = text || ''; }
   function setToolPageInfo(text){ const el = $('toolPageInfo'); if (el) el.textContent = text || ''; }
   function buildStrictArgsTemplateForUi(id){ return 'agent --json --session-id {{activeSessionId}} --message "Jalankan workflow '+id+' secara strict. Jangan menebak, jangan pakai konteks lama, jangan ambil data dari memori percakapan. Gunakan hanya workflow yang sesuai dan jawab hanya dari hasil workflow. Jika input tidak exact atau tidak ditemukan, katakan tidak ditemukan. Permintaan user: {{text}}"'; }
@@ -438,19 +454,23 @@ function renderAdminPage() {
   async function loadTools(){ const r = await fetch('/admin/api/tools',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); tools = j.tools || []; renderList(); }
   async function loadSettings(){ const r = await fetch('/admin/api/settings',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setSettingsStatus(j.message || 'Gagal load setting'); return; } setSettingsStatus(''); renderSettings(j); }
   async function loadRouter(){ const r = await fetch('/admin/api/router',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setRouterStatus(j.message || 'Gagal load router'); return; } $('routerJson').value = JSON.stringify(j.router || {}, null, 2); setRouterStatus(''); }
-  function renderKb(items){ if(!items || !items.length){ $('kbList').innerHTML='<div class="muted">Belum ada dokumen knowledge base.</div>'; return; } $('kbList').innerHTML = items.map(function(x){ return '<div class="item"><div><b>'+esc(x.title||'-')+'</b> <span class="muted">['+esc(x.id||'-')+']</span></div><div class="muted" style="margin-top:6px">path: '+esc(x.path||'-')+' · type: '+esc(x.type||'-')+'</div><div class="muted">tags: '+esc((x.tags||[]).join(', ')||'-')+'</div><div class="muted">'+esc(x.description||'')+'</div></div>'; }).join(''); }
+  function renderKb(items){ const filter = (($('kbFilter') && $('kbFilter').value) || '').trim().toLowerCase(); const rows = (items || []).filter(function(x){ const hay = [x.id, x.title, x.path, (x.tags||[]).join(' '), x.description || ''].join(' ').toLowerCase(); return !filter || hay.includes(filter); }); if(!rows.length){ $('kbList').innerHTML='<div class="muted">Belum ada dokumen knowledge base yang cocok.</div>'; return; } $('kbList').innerHTML = rows.map(function(x){ return '<div class="item"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>'+esc(x.title||'-')+'</b> <span class="muted">['+esc(x.id||'-')+']</span></div><div class="actions"><button class="danger" type="button" data-kb-del="'+esc(x.id||'')+'">Hapus</button></div></div><div class="muted" style="margin-top:6px">path: '+esc(x.path||'-')+' · type: '+esc(x.type||'-')+'</div><div class="muted">tags: '+esc((x.tags||[]).join(', ')||'-')+'</div><div class="muted">'+esc(x.description||'')+'</div></div>'; }).join(''); document.querySelectorAll('[data-kb-del]').forEach(el=>el.onclick=()=>deleteKbDoc(el.getAttribute('data-kb-del'))); }
   async function loadKb(){ const r = await fetch('/admin/api/kb',{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setKbStatus(j.message || 'Gagal load knowledge base'); return; } renderKb(j.docs || []); setKbStatus(''); }
+  async function deleteKbDoc(id){ if(!id) return; if(!confirm('Hapus dokumen KB '+id+'?')) return; const r = await fetch('/admin/api/kb/'+encodeURIComponent(id),{method:'DELETE',headers:{'cache-control':'no-cache'}}); const j = await r.json(); setKbStatus(j.message || (r.ok ? 'Dokumen dihapus' : 'Gagal hapus dokumen')); if(r.ok) loadKb(); }
   async function loadLogs(){ const date = $('logDate').value.trim(); const pageSize = Number($('logPageSize').value || 20); const qs = new URLSearchParams({ page:String(logPage), pageSize:String(pageSize) }); if(date) qs.set('date', date); const r = await fetch('/admin/api/logs?'+qs.toString(),{headers:{'cache-control':'no-cache'}}); const j = await r.json(); if(!r.ok){ setLogStatus(j.message || j.error || 'Gagal load log'); return; } renderLogs(j.logs || []); const total = Number(j.total || 0); const start = total ? ((Number(j.page||1)-1) * Number(j.pageSize||pageSize)) + 1 : 0; const end = Math.min(total, start + Number(j.pageSize||pageSize) - 1); setLogPageInfo('Page '+String(j.page||logPage)+' · '+String(start)+'-'+String(end)+' / '+String(total)); setLogStatus(''); }
   $('strictMode').addEventListener('change', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
   $('id').addEventListener('input', () => { if($('strictMode').checked){ const id=$('id').value.trim() || 'workflow'; $('argsTemplate').value = buildStrictArgsTemplateForUi(id); } });
   $('toolForm').addEventListener('submit', async (e) => { e.preventDefault(); const originalId = $('originalId').value.trim(); const current = tools.find(x => x.id===originalId) || tools.find(x => x.id===$('id').value.trim()) || {}; const payload = { id:$('id').value.trim(), toolName:$('toolName').value.trim(), readToolName:current.readToolName||'', aliases:splitCsv($('aliases').value), readAliases:Array.isArray(current.readAliases) ? current.readAliases : [], description:$('description').value.trim(), readDescription:current.readDescription||'', cmd:$('cmd').value.trim(), argsTemplate:$('argsTemplate').value.trim(), strictMode:$('strictMode').checked }; const method = originalId ? 'PUT' : 'POST'; const url = originalId ? '/admin/api/tools/'+encodeURIComponent(originalId) : '/admin/api/tools'; const r = await fetch(url,{method,headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok){ resetForm(); loadTools(); } });
-  $('kbForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { id:$('kb_id').value.trim(), title:$('kb_title').value.trim(), path:$('kb_path').value.trim(), type:$('kb_type').value, tags:splitCsv($('kb_tags').value), description:$('kb_description').value.trim() }; const r = await fetch('/admin/api/kb',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setKbStatus(j.message || (r.ok ? 'Dokumen ditambahkan' : 'Gagal tambah dokumen')); if(r.ok){ $('kbForm').reset(); loadKb(); } });
+  $('kbForm').addEventListener('submit', async (e) => { e.preventDefault(); resetKbUploadProgress(); const fileInput = $('kb_file'); const file = fileInput && fileInput.files && fileInput.files[0]; let finalPath = $('kb_path').value.trim(); if(file){ const fd = new FormData(); fd.append('file', file, file.name); setKbUploadProgress(5, 'Mulai upload file...'); const upj = await new Promise((resolve, reject) => { const xhr = new XMLHttpRequest(); xhr.open('POST', '/admin/api/kb/upload'); xhr.responseType = 'json'; xhr.upload.onprogress = (ev) => { if(ev.lengthComputable){ const pct = Math.max(5, Math.min(90, Math.round((ev.loaded / ev.total) * 90))); setKbUploadProgress(pct, 'Upload file ' + pct + '%'); } else { setKbUploadProgress(50, 'Upload file...'); } }; xhr.onload = () => { if(xhr.status >= 200 && xhr.status < 300) resolve(xhr.response); else reject(xhr.response || { message: 'Gagal upload file' }); }; xhr.onerror = () => reject({ message: 'Gagal upload file' }); xhr.send(fd); }); finalPath = upj.path || file.name; setKbUploadProgress(92, 'Menyimpan metadata dokumen...'); }
+  const payload = { id:$('kb_id').value.trim(), title:$('kb_title').value.trim(), path:finalPath, type:$('kb_type').value, tags:splitCsv($('kb_tags').value), description:$('kb_description').value.trim() };
+  const r = await fetch('/admin/api/kb',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setKbStatus(j.message || (r.ok ? 'Dokumen ditambahkan' : 'Gagal tambah dokumen')); if(r.ok){ setKbUploadProgress(100, 'Selesai'); $('kbForm').reset(); loadKb(); setTimeout(()=>resetKbUploadProgress(), 1200); } else { setKbUploadProgress(0, 'Gagal simpan metadata'); } });
   $('settingsForm').addEventListener('submit', async (e) => { e.preventDefault(); const payload = { orchestratorUrl:$('s_orchestratorUrl').value.trim(), defaultWorkflow:$('s_defaultWorkflow').value.trim(), host:$('s_host').value.trim(), port:Number($('s_port').value||0), keepaliveMs:Number($('s_keepaliveMs').value||0), reconnectMs:Number($('s_reconnectMs').value||0), xiaozhiWsUrl:$('s_xiaozhiWsUrl').value.trim() }; const r = await fetch('/admin/api/settings',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify(payload)}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Tersimpan' : 'Gagal')); if(r.ok) loadSettings(); });
   $('restartBridgeBtn').addEventListener('click', async () => { const ok = confirm('Restart bridge sekarang?'); if(!ok) return; const r = await fetch('/admin/api/restart-bridge',{method:'POST',headers:{'content-type':'application/json','cache-control':'no-cache'},body:'{}'}); const j = await r.json(); setSettingsStatus(j.message || (r.ok ? 'Restart diminta' : 'Gagal restart')); });
   $('saveRouterBtn').addEventListener('click', async () => { let payload; try { payload = JSON.parse($('routerJson').value || '{}'); } catch(e) { setRouterStatus('JSON router tidak valid'); return; } const r = await fetch('/admin/api/router',{method:'PUT',headers:{'content-type':'application/json','cache-control':'no-cache'},body:JSON.stringify({router: payload})}); const j = await r.json(); setRouterStatus(j.message || (r.ok ? 'Router tersimpan' : 'Gagal simpan router')); });
   $('reloadRouterBtn').addEventListener('click', async () => { await loadRouter(); setRouterStatus('Router direload'); });
   $('reloadLogsBtn').addEventListener('click', async () => { logPage = 1; await loadLogs(); setLogStatus('Log direload'); });
   $('reloadKbBtn').addEventListener('click', async () => { await loadKb(); setKbStatus('Knowledge base direload'); });
+  $('kbFilter').addEventListener('input', async () => { await loadKb(); });
   $('prevLogsBtn').addEventListener('click', async () => { if(logPage > 1) logPage--; await loadLogs(); });
   $('nextLogsBtn').addEventListener('click', async () => { logPage++; await loadLogs(); });
   $('logDate').addEventListener('change', async () => { logPage = 1; await loadLogs(); });
@@ -790,6 +810,21 @@ fastify.get('/admin/api/kb', async (_request, reply) => {
     return reply.status(400).send({ message: String((err as Error).message || err) });
   }
 });
+fastify.post('/admin/api/kb/upload', async (request, reply) => {
+  try {
+    const file = await (request as any).file();
+    if (!file) return reply.status(400).send({ message: 'File wajib diupload.' });
+    const filename = path.basename(String(file.filename || '').trim());
+    if (!filename) return reply.status(400).send({ message: 'Nama file tidak valid.' });
+    const kbDir = '/home/yoga/.openclaw/workspace/XiaoMCP/knowledge-base';
+    fs.mkdirSync(kbDir, { recursive: true });
+    const filePath = path.join(kbDir, filename);
+    await pipeline(file.file, fs.createWriteStream(filePath));
+    return { ok: true, message: 'File berhasil diupload.', path: filename };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
 fastify.post('/admin/api/kb', async (request, reply) => {
   try {
     const body = request.body as any;
@@ -802,6 +837,15 @@ fastify.post('/admin/api/kb', async (request, reply) => {
       description: String(body.description || '').trim(),
     });
     return { ok: true, message: 'Dokumen knowledge base berhasil ditambahkan.' };
+  } catch (err) {
+    return reply.status(400).send({ message: String((err as Error).message || err) });
+  }
+});
+fastify.delete('/admin/api/kb/:id', async (request, reply) => {
+  try {
+    const { id } = request.params as { id: string };
+    await removeKnowledgeBaseDoc(String(id || '').trim());
+    return { ok: true, message: 'Dokumen knowledge base berhasil dihapus.' };
   } catch (err) {
     return reply.status(400).send({ message: String((err as Error).message || err) });
   }
