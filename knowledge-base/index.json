@@ -1,28 +1,31 @@
 {
-  "updatedAt": "2026-05-17T06:49:42.281Z",
+  "updatedAt": "2026-05-17T12:11:21.705Z",
   "docs": [
     {
-      "id": "uu-adminduk-sample",
-      "title": "UU Adminduk Sample",
-      "path": "uuadminduk-sample.txt",
-      "type": "text",
+      "id": "uu-no.24-tahun-2013",
+      "title": "uu adminduk no.24 tahun 2013",
+      "path": "UU Nomor 24 Tahun 2013.pdf",
+      "type": "pdf",
       "tags": [
         "adminduk",
-        "sample",
-        "kependudukan"
+        "uu",
+        "no.24",
+        "24",
+        "uu no.24 tahun 2013"
       ],
-      "description": ""
+      "description": "peraturan adminduk no.24 tahun 2013"
     },
     {
-      "id": "permen-sample",
-      "title": "Permen Sample",
-      "path": "permen-sample.txt",
-      "type": "text",
+      "id": "alquran-terjemahan-bahasa-indonesia",
+      "title": "AlQuran terjemahan bahasa indonesia",
+      "path": "al-quran-pdf-terjemah-nafan-akhun.pdf",
+      "type": "pdf",
       "tags": [
-        "permen",
-        "adminduk"
+        "alquran",
+        "kitab suci",
+        "quran"
       ],
-      "description": "Dokumen contoh peraturan menteri"
+      "description": "Alquran terjemahan bahasa indonesia"
     }
   ]
 }
